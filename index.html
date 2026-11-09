@@ -653,6 +653,15 @@ function roleRank(role){
 }
 function canLead(){return canAdmin()||roleRank(currentUser?.role)>=4}
 function canEditEmployee(emp){return canLead()}
+// Apontamento de presença: ADMIN e SUPERVISOR+ podem lançar em qualquer equipe.
+// Líderes continuam restritos aos colaboradores vinculados ao seu próprio gestor.
+function canEditPresence(emp){
+ if(!currentUser)return false;
+ if(canAdmin()||roleRank(currentUser.role)>=5)return true;
+ const ownManager=String(currentUser.managerKey||currentUser.name||"").trim().toUpperCase();
+ const employeeManager=String(emp?.manager||"").trim().toUpperCase();
+ return !!ownManager&&!!employeeManager&&ownManager===employeeManager;
+}
 function canAccessDiaristas(){return canLead()}
 // Previsão/programação: somente supervisor, coordenador e gerente.
 function canManageDiaristas(){return canAdmin()||["SUPERVISOR DE OPERAÇÕES","COORDENADOR DE OPERAÇÕES","GERENTE"].includes(String(currentUser?.role||"").toUpperCase())||roleRank(currentUser?.role)>=5}
@@ -778,8 +787,11 @@ function renderPresence(){
    const val=presence[emp.id]?.[d]||"",approval=approvals[`${emp.id}|${d}`]?.status||(val?"pending":"");
    const td=document.createElement("td");td.className="status-cell"+(val?" status-"+val:"")+(approval==="pending"?" approval-pending":approval==="approved"?" approval-approved":"");
    const input=document.createElement("input");input.setAttribute("list","statusOptions");input.setAttribute("aria-label",`Status ${emp.name} dia ${d}`);input.maxLength=8;input.value=val;input.placeholder="—";
-   input.disabled=!!currentUser&&currentUser.role!=="admin"&&(String(emp.manager||"").trim().toUpperCase()!==String(currentUser.managerKey||"").trim().toUpperCase());
-   const applyStatus=()=>{const code=input.value.trim().toUpperCase();input.value=STATUSES.includes(code)?code:"";presence[emp.id]??={};const key=`${emp.id}|${d}`;if(input.value){presence[emp.id][d]=input.value;approvals[key]={status:"pending",by:currentUser?.name||"Usuário",at:new Date().toISOString()}}else{delete presence[emp.id][d];delete approvals[key]}td.className="status-cell"+(input.value?" status-"+input.value+" approval-pending":"");savePresence(false)};
+   input.disabled=!canEditPresence(emp);
+   const applyStatus=()=>{
+    if(!canEditPresence(emp)){input.value=presence[emp.id]?.[d]||"";notify("Você só pode apontar colaboradores da sua equipe. Supervisor e administrador podem apontar em todas as equipes.");return}
+    const code=input.value.trim().toUpperCase();input.value=STATUSES.includes(code)?code:"";presence[emp.id]??={};const key=`${emp.id}|${d}`;if(input.value){presence[emp.id][d]=input.value;approvals[key]={status:"pending",by:currentUser?.name||"Usuário",at:new Date().toISOString()}}else{delete presence[emp.id][d];delete approvals[key]}td.className="status-cell"+(input.value?" status-"+input.value+" approval-pending":"");savePresence(false)
+   };
    input.addEventListener("change",applyStatus);input.addEventListener("blur",applyStatus);input.addEventListener("keydown",e=>{
     if(e.key==="Enter"){
      e.preventDefault();
