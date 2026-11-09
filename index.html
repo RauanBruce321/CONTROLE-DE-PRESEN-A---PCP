@@ -445,7 +445,6 @@ const SUPABASE_URL = "https://dlownklhwkatjnjwiqst.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_V1Hktkj_7DKy7aY0uISN7A_KiR7YU9g";
 const APP_STORAGE_PREFIX = "ics_pcp_v2_";
 const PCP_TABLE = "pcp_app_state";
-const PCP_PENDING_KEY = "pcp_pending_sync_v1";
 let pcpClient = null;
 let pcpRemoteReady = false;
 let pcpSyncTimer = null;
@@ -456,18 +455,6 @@ let pcpRealtimeChannel = null;
 let pcpRealtimeActive = false;
 let pcpFallbackTimer = null;
 let pcpFallbackBusy = false;
-let pcpRealtimeRetryTimer = null;
-let pcpBootstrapRetryTimer = null;
-let pcpRealtimeWatchdogTimer = null;
-let pcpSyncRetryDelay = 1200;
-let pcpAppInitialized = false;
-// Recupera gravações que ainda não tinham recebido confirmação antes de fechar/atualizar.
-try {
- const savedQueue=JSON.parse(localStorage.getItem(PCP_PENDING_KEY)||"{}");
- for(const [key,entry] of Object.entries(savedQueue||{})) {
-  if(entry && Object.prototype.hasOwnProperty.call(entry,"value")) pcpSyncQueue.set(key,entry);
- }
-} catch(_) { localStorage.removeItem(PCP_PENDING_KEY); }
 
 function pcpSetStatus(label, title) {
  const el = document.getElementById("pcpSyncStatus");
@@ -488,141 +475,54 @@ async function pcpBootstrap() {
   pcpSetStatus("SEM CHAVE","Cole a chave publishable do Supabase no início do arquivo.");
   return true;
  }
- if(pcpRemoteReady) return true;
  try {
   pcpSetStatus("CONECTANDO","Conectando ao banco central PCP...");
-  if(!pcpClient) pcpClient=createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{persistSession:false,autoRefreshToken:false},realtime:{params:{eventsPerSecond:10}}});
+  pcpClient=createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{persistSession:false,autoRefreshToken:false},realtime:{params:{eventsPerSecond:2}}});
   const {data,error}=await pcpClient.from(PCP_TABLE).select("key,value");
   if(error) throw error;
-  const rows=data||[];
-  const remoteKeys=new Set(rows.map(r=>r.key));
-  if(rows.length) {
-   for(const row of rows) {
-    const pending=pcpSyncQueue.get(row.key);
-    if(pending) {
-     const merged=pcpMergeDelta(pending.base,pending.value,row.value);
-     pending.base=row.value;
-     pending.value=merged;
-     localStorage.setItem(APP_STORAGE_PREFIX+row.key,JSON.stringify(merged));
-     if(pcpAppInitialized) pcpApplyRemoteChange(row.key,merged,false);
-    } else {
-     localStorage.setItem(APP_STORAGE_PREFIX+row.key,JSON.stringify(row.value));
-     if(pcpAppInitialized) pcpApplyRemoteChange(row.key,row.value,false);
-    }
-   }
-   // Não apaga do navegador nenhuma chave que ainda esteja aguardando envio.
-   for(let i=localStorage.length-1;i>=0;i--) {
-    const k=localStorage.key(i);
-    if(k&&k.startsWith(APP_STORAGE_PREFIX)) {
-     const key=k.slice(APP_STORAGE_PREFIX.length);
-     if(!remoteKeys.has(key)&&!pcpSyncQueue.has(key)) localStorage.removeItem(k);
-    }
-   }
+  if(data && data.length) {
+   const remoteKeys=new Set(data.map(r=>APP_STORAGE_PREFIX+r.key));
+   for(let i=localStorage.length-1;i>=0;i--){const k=localStorage.key(i);if(k&&k.startsWith(APP_STORAGE_PREFIX)&&!remoteKeys.has(k))localStorage.removeItem(k);}
+   for(const row of data) localStorage.setItem(APP_STORAGE_PREFIX+row.key,JSON.stringify(row.value));
   } else {
+   // Primeira conexão: aproveita dados já existentes neste navegador.
    const existing=pcpLocalEntries();
-   if(existing.length) {
-    const {error:seedError}=await pcpClient.from(PCP_TABLE).upsert(existing,{onConflict:"key"});
-    if(seedError) throw seedError;
-   }
+   if(existing.length){const {error:seedError}=await pcpClient.from(PCP_TABLE).upsert(existing,{onConflict:"key"});if(seedError)throw seedError;}
   }
   pcpRemoteReady=true;
-  pcpPersistQueue();
-  pcpSetStatus("CONECTADO","Banco central conectado. Alterações pendentes serão enviadas e distribuídas aos demais aparelhos.");
-  if(pcpSyncQueue.size){clearTimeout(pcpSyncTimer);pcpSyncTimer=setTimeout(pcpFlushSync,80);}
+  pcpSetStatus("CONECTADO","Dados carregados do Supabase. Sincronização automática ativa.");
   return true;
  } catch(err) {
   pcpLastError=err?.message||String(err);
   pcpRemoteReady=false;
-  pcpSetStatus("SEM CONEXÃO",pcpLastError);
+  pcpSetStatus("ERRO SUPABASE",pcpLastError);
   console.error("PCP Supabase:",err);
-  return true; // mantém o login original e preserva as alterações locais.
+  return true; // mantém o sistema local disponível até corrigir a configuração
  }
 }
-function pcpJsonEqual(a,b){
- try{return JSON.stringify(a)===JSON.stringify(b)}catch(_){return a===b}
-}
-// Mescla alterações por ID/campo para que duas pessoas não apaguem edições diferentes.
-function pcpMergeDelta(base,local,remote){
- if(pcpJsonEqual(base,local)) return remote===undefined?local:remote;
- if(Array.isArray(local) && (base===undefined || Array.isArray(base)) && (remote===undefined || Array.isArray(remote))){
-  const idOf=x=>x&&typeof x==="object"&&x.id!=null?String(x.id):null;
-  const all=[...(base||[]),...local,...(remote||[])];
-  if(all.every(x=>idOf(x)!==null)){
-   const bm=new Map((base||[]).map(x=>[idOf(x),x]));
-   const lm=new Map(local.map(x=>[idOf(x),x]));
-   const rm=new Map((remote||[]).map(x=>[idOf(x),x]));
-   for(const [id,b] of bm){
-    if(!lm.has(id)){rm.delete(id);continue;}
-    const l=lm.get(id);
-    if(!pcpJsonEqual(b,l)) rm.set(id,pcpMergeDelta(b,l,rm.get(id)));
-   }
-   for(const [id,l] of lm) if(!bm.has(id)) rm.set(id,l);
-   return [...rm.values()];
-  }
-  return local;
- }
- if(local&&typeof local==="object"&&!Array.isArray(local)&&base&&typeof base==="object"&&!Array.isArray(base)&&(!remote||typeof remote==="object")&&!Array.isArray(remote)){
-  const out={...(remote||{})};
-  const keys=new Set([...Object.keys(base),...Object.keys(local)]);
-  for(const k of keys){
-   const had=Object.prototype.hasOwnProperty.call(base,k),has=Object.prototype.hasOwnProperty.call(local,k);
-   if(had&&!has){delete out[k];continue;}
-   if(has&&!had){out[k]=local[k];continue;}
-   if(has&&had&&!pcpJsonEqual(base[k],local[k])) out[k]=pcpMergeDelta(base[k],local[k],out[k]);
-  }
-  return out;
- }
- return local;
-}
-function pcpPersistQueue(){
- try{
-  const obj={};
-  for(const [key,entry] of pcpSyncQueue.entries()) obj[key]=entry;
-  if(Object.keys(obj).length) localStorage.setItem(PCP_PENDING_KEY,JSON.stringify(obj));
-  else localStorage.removeItem(PCP_PENDING_KEY);
- }catch(err){console.error("PCP fila local:",err);}
-}
-async function pcpFlushSync(){
- if(!pcpRemoteReady||!pcpClient||pcpSyncBusy||!pcpSyncQueue.size)return;
+async function pcpFlushSync() {
+ if(!pcpRemoteReady || !pcpClient || pcpSyncBusy || !pcpSyncQueue.size) return;
  pcpSyncBusy=true;
- const batch=[...pcpSyncQueue.entries()].map(([key,entry])=>({key,entry,base:entry.base,value:entry.value}));
- try{
-  const keys=batch.map(x=>x.key);
-  const {data:latestRows,error:readError}=await pcpClient.from(PCP_TABLE).select("key,value").in("key",keys);
-  if(readError)throw readError;
-  const latest=new Map((latestRows||[]).map(r=>[r.key,r.value]));
-  const writes=batch.map(x=>({key:x.key,value:pcpMergeDelta(x.base,x.value,latest.get(x.key))}));
-  const {error}=await pcpClient.from(PCP_TABLE).upsert(writes,{onConflict:"key"});
-  if(error)throw error;
-  pcpSyncRetryDelay=1200;
-  for(const row of writes){
-   const sent=batch.find(x=>x.key===row.key);
-   const current=pcpSyncQueue.get(row.key);
-   if(current===sent?.entry){
-    pcpSyncQueue.delete(row.key);
-    localStorage.setItem(APP_STORAGE_PREFIX+row.key,JSON.stringify(row.value));
-    pcpApplyRemoteChange(row.key,row.value,false);
-   }else if(current){current.base=row.value;}
-  }
-  pcpPersistQueue();
-  pcpSetStatus(pcpSyncQueue.size?"SALVANDO":"SALVO",pcpSyncQueue.size?"Há uma nova alteração aguardando confirmação do Supabase.":"Gravação confirmada no Supabase.");
- }catch(err){
-  pcpPersistQueue();
-  pcpSyncRetryDelay=Math.min(Math.max(pcpSyncRetryDelay*2,1800),15000);
-  pcpSetStatus("ERRO AO SALVAR",err?.message||String(err));
+ const batch=[...pcpSyncQueue.entries()].map(([key,value])=>({key,value}));
+ batch.forEach(x=>pcpSyncQueue.delete(x.key));
+ try {
+  const {error}=await pcpClient.from(PCP_TABLE).upsert(batch,{onConflict:"key"});
+  if(error) throw error;
+  pcpSetStatus("CONECTADO","Últimas alterações salvas no Supabase.");
+ } catch(err) {
+  batch.forEach(x=>pcpSyncQueue.set(x.key,x.value));
+  pcpSetStatus("FALHA AO SALVAR",err?.message||String(err));
   console.error("PCP sincronização:",err);
- }finally{
+ } finally {
   pcpSyncBusy=false;
-  if(pcpSyncQueue.size){clearTimeout(pcpSyncTimer);pcpSyncTimer=setTimeout(pcpFlushSync,pcpSyncRetryDelay);}
+  if(pcpSyncQueue.size) pcpSyncTimer=setTimeout(pcpFlushSync,1200);
  }
 }
-function pcpQueueSync(key,value,baseValue){
- const previous=pcpSyncQueue.get(key);
- pcpSyncQueue.set(key,{base:previous?previous.base:baseValue,value:structuredCloneSafe(value)});
- pcpPersistQueue();
- pcpSetStatus(pcpRemoteReady?"SALVANDO":"AGUARDANDO REDE",pcpRemoteReady?"Enviando alteração ao Supabase.":"Alteração guardada neste aparelho; será enviada quando o Supabase conectar.");
+function pcpQueueSync(key,value) {
+ if(!pcpRemoteReady) return;
+ pcpSyncQueue.set(key,value);
  clearTimeout(pcpSyncTimer);
- if(pcpRemoteReady) pcpSyncTimer=setTimeout(pcpFlushSync,80);
+ pcpSyncTimer=setTimeout(pcpFlushSync,250);
 }
 function pcpApplyRemoteChange(key, value, deleted=false) {
  const empty = deleted ? null : value;
@@ -661,99 +561,60 @@ function pcpApplyRemoteSnapshot(rows) {
   pcpApplyRemoteChange(key,null,true);
  }
 }
-async function pcpFallbackSync(){
- if(!pcpClient||pcpRealtimeActive||pcpFallbackBusy)return;
+async function pcpFallbackSync() {
+ if(!pcpClient || pcpRealtimeActive || pcpFallbackBusy) return;
  pcpFallbackBusy=true;
- try{
+ try {
   const {data,error}=await pcpClient.from(PCP_TABLE).select("key,value");
-  if(error)throw error;
+  if(error) throw error;
   pcpApplyRemoteSnapshot(data||[]);
-  pcpSetStatus("SINCRONIZADO","Conferência temporária ativa enquanto o Realtime reconecta.");
- }catch(err){pcpSetStatus("SEM SINCRONIA",err?.message||"Falha ao consultar alterações remotas.");}
- finally{pcpFallbackBusy=false;}
+  pcpSetStatus("SINCRONIZADO","Sincronização de contingência ativa. O sistema está conferindo alterações automaticamente enquanto o canal em tempo real reconecta.");
+ } catch(err) {
+  pcpSetStatus("SEM SINCRONIA",err?.message||"Falha ao consultar alterações remotas.");
+ } finally { pcpFallbackBusy=false; }
 }
-function pcpStartFallback(){
- if(pcpFallbackTimer||pcpRealtimeActive)return;
- pcpFallbackTimer=setInterval(pcpFallbackSync,8000);
+function pcpStartFallback() {
+ if(pcpFallbackTimer || pcpRealtimeActive) return;
+ // Consulta somente quando o WebSocket do Realtime não está conectado.
+ pcpFallbackTimer=setInterval(pcpFallbackSync,12000);
  pcpFallbackSync();
 }
-function pcpStopFallback(){if(pcpFallbackTimer){clearInterval(pcpFallbackTimer);pcpFallbackTimer=null;}}
-async function pcpRefreshSnapshot(){
- if(!pcpClient||!pcpRemoteReady)return;
- try{
-  const {data,error}=await pcpClient.from(PCP_TABLE).select("key,value");
-  if(error)throw error;
-  pcpApplyRemoteSnapshot(data||[]);
- }catch(err){console.warn("PCP reconciliação:",err);}
+function pcpStopFallback() {
+ if(pcpFallbackTimer){clearInterval(pcpFallbackTimer);pcpFallbackTimer=null;}
 }
-function pcpScheduleRealtimeRetry(delay=3000){
- if(pcpRealtimeRetryTimer)return;
- pcpRealtimeRetryTimer=setTimeout(async()=>{
-  pcpRealtimeRetryTimer=null;
-  const old=pcpRealtimeChannel;
-  pcpRealtimeChannel=null;
-  pcpRealtimeActive=false;
-  if(old){try{await old.unsubscribe();}catch(_){} try{await pcpClient.removeChannel(old);}catch(_){}}
-  pcpStartRealtime();
- },delay);
-}
-function pcpStartRealtime(){
- if(!pcpClient||pcpRealtimeChannel||!pcpRemoteReady)return;
- const channel=pcpClient.channel("pcp-central-sync-v2")
+function pcpStartRealtime() {
+ if(!pcpClient || pcpRealtimeChannel) return;
+ pcpRealtimeChannel=pcpClient.channel("pcp-central-sync")
   .on("postgres_changes",{event:"*",schema:"public",table:PCP_TABLE},payload=>{
    const row=payload.new||payload.old;
-   if(!row?.key)return;
+   if(!row?.key) return;
    const storageKey=APP_STORAGE_PREFIX+row.key;
-   if(payload.eventType==="DELETE"){
-    if(pcpSyncQueue.has(row.key))return;
-    if(localStorage.getItem(storageKey)!==null){localStorage.removeItem(storageKey);pcpApplyRemoteChange(row.key,null,true);}
+   if(payload.eventType==="DELETE") {
+    if(localStorage.getItem(storageKey)!==null){
+     localStorage.removeItem(storageKey);
+     pcpApplyRemoteChange(row.key,null,true);
+    }
     return;
    }
-   const pending=pcpSyncQueue.get(row.key);
-   if(pending){
-    const merged=pcpMergeDelta(pending.base,pending.value,row.value);
-    pending.base=row.value;pending.value=merged;
-    localStorage.setItem(storageKey,JSON.stringify(merged));
-    pcpPersistQueue();pcpApplyRemoteChange(row.key,merged,false);return;
-   }
    const next=JSON.stringify(row.value);
-   if(localStorage.getItem(storageKey)===next)return;
-   localStorage.setItem(storageKey,next);pcpApplyRemoteChange(row.key,row.value,false);
+   if(pcpSyncQueue.has(row.key)) return;
+   if(localStorage.getItem(storageKey)===next) return;
+   localStorage.setItem(storageKey,next);
+   pcpApplyRemoteChange(row.key,row.value,false);
+  })
+  .subscribe(status=>{
+   if(status==="SUBSCRIBED") {
+    pcpRealtimeActive=true;
+    pcpStopFallback();
+    pcpSetStatus("TEMPO REAL","Conectado: alterações de todos os aparelhos aparecem automaticamente, sem atualizar a página.");
+   } else if(["CHANNEL_ERROR","TIMED_OUT","CLOSED"].includes(status)) {
+    pcpRealtimeActive=false;
+    pcpSetStatus("RECONECTANDO","Canal em tempo real indisponível. Ativando sincronização automática de segurança.");
+    pcpStartFallback();
+   }
   });
- pcpRealtimeChannel=channel;
- if(pcpRealtimeWatchdogTimer)clearTimeout(pcpRealtimeWatchdogTimer);
- pcpRealtimeWatchdogTimer=setTimeout(()=>{
-  pcpRealtimeWatchdogTimer=null;
-  if(pcpRealtimeChannel===channel&&!pcpRealtimeActive){
-   pcpSetStatus("SINCRONIZANDO","Realtime ainda não confirmou conexão; conferindo o banco temporariamente.");
-   pcpStartFallback();pcpScheduleRealtimeRetry(5000);
-  }
- },7000);
- channel.subscribe(status=>{
-  if(pcpRealtimeChannel!==channel)return;
-  if(status==="SUBSCRIBED"){
-   pcpRealtimeActive=true;
-   if(pcpRealtimeWatchdogTimer){clearTimeout(pcpRealtimeWatchdogTimer);pcpRealtimeWatchdogTimer=null;}
-   pcpStopFallback();
-   pcpSetStatus("TEMPO REAL","Conectado. Alterações confirmadas no Supabase são distribuídas aos outros aparelhos.");
-   pcpRefreshSnapshot();
-   if(pcpSyncQueue.size){clearTimeout(pcpSyncTimer);pcpSyncTimer=setTimeout(pcpFlushSync,80);}
-  }else if(["CHANNEL_ERROR","TIMED_OUT","CLOSED"].includes(status)){
-   pcpRealtimeActive=false;
-   if(pcpRealtimeWatchdogTimer){clearTimeout(pcpRealtimeWatchdogTimer);pcpRealtimeWatchdogTimer=null;}
-   pcpSetStatus("RECONECTANDO","Canal Realtime indisponível; as alterações ficam protegidas e haverá nova tentativa.");
-   pcpStartFallback();pcpScheduleRealtimeRetry(3000);
-  }
- });
 }
-function pcpStartBootstrapRetry(){
- if(pcpBootstrapRetryTimer||pcpRemoteReady)return;
- pcpBootstrapRetryTimer=setInterval(async()=>{
-  if(pcpRemoteReady){clearInterval(pcpBootstrapRetryTimer);pcpBootstrapRetryTimer=null;return;}
-  await pcpBootstrap();
-  if(pcpRemoteReady){clearInterval(pcpBootstrapRetryTimer);pcpBootstrapRetryTimer=null;pcpStartRealtime();}
- },5000);
-}
+
 if (await pcpBootstrap()) {
 /*
   CONFIGURAÇÃO SUPABASE
@@ -835,14 +696,7 @@ function load(key, fallback){
  catch(e){return structuredCloneSafe(fallback)}
 }
 function structuredCloneSafe(value){return JSON.parse(JSON.stringify(value))}
-function store(key,value){
- const storageKey=APP_STORAGE_PREFIX+key;
- let baseValue;
- try{const raw=localStorage.getItem(storageKey);baseValue=raw===null?undefined:JSON.parse(raw);}catch(_){baseValue=undefined;}
- const snapshot=structuredCloneSafe(value);
- localStorage.setItem(storageKey,JSON.stringify(snapshot));
- pcpQueueSync(key,snapshot,baseValue);
-}
+function store(key,value){localStorage.setItem(APP_STORAGE_PREFIX+key,JSON.stringify(value));pcpQueueSync(key,value)}
 function periodKey(y,m){return `${y}-${String(m+1).padStart(2,"0")}`}
 function loadPresence(){const key=periodKey(currentPeriod.year,currentPeriod.month);presence=load("presence_"+key,{});approvals=load("approvals_"+key,{})}
 function savePresence(show=false){const key=periodKey(currentPeriod.year,currentPeriod.month);store("presence_"+key,presence);store("approvals_"+key,approvals);if(show)notify("Apontamentos salvos automaticamente.");updateDashboard();renderCompletion()}
@@ -1368,22 +1222,10 @@ function init(){
  document.getElementById("dashYear").value=currentPeriod.year;document.getElementById("dashMonth").value=currentPeriod.month;
  document.getElementById("dashDay").value=new Date().getDate();
 }
-init(); pcpRestoreSession(); pcpStartRealtime();
-if(!pcpRemoteReady) pcpStartBootstrapRetry();
-document.addEventListener("visibilitychange",()=>{
- if(!document.hidden){
-  if(pcpSyncQueue.size&&pcpRemoteReady){clearTimeout(pcpSyncTimer);pcpSyncTimer=setTimeout(pcpFlushSync,80);}
-  if(pcpRemoteReady)pcpRefreshSnapshot();
-  if(!pcpRealtimeActive&&pcpRemoteReady)pcpScheduleRealtimeRetry(500);
-  if(!pcpRemoteReady)pcpStartBootstrapRetry();
- }
-});
-window.addEventListener("online",()=>{
- if(!pcpRemoteReady)pcpStartBootstrapRetry();
- if(pcpSyncQueue.size&&pcpRemoteReady){clearTimeout(pcpSyncTimer);pcpSyncTimer=setTimeout(pcpFlushSync,80);}
- if(!pcpRealtimeActive&&pcpRemoteReady)pcpScheduleRealtimeRetry(500);
-});
-if(!pcpRemoteReady)console.warn("PCP aguardando conexão com Supabase; login original mantido e alterações em fila.");
+init();
+pcpRestoreSession();
+pcpStartRealtime();
+if(!pcpRemoteReady) console.warn("PCP está em modo local. Configure a chave e execute o SQL de conexão para ativar a sincronização central.");
 }
 </script>
 </body>
