@@ -97,6 +97,10 @@ thead th.sticky-name{z-index:3;background:var(--red)}
 .inline-note{font-size:11px;color:var(--muted);line-height:1.5}
 .badge{display:inline-block;padding:4px 7px;border:1px solid var(--line);font-size:10px;font-weight:700;background:#f4f5f6}
 .badge.admin{background:#e8edf5;color:var(--navy)}.badge.leader{background:#fff0f2;color:var(--red)}
+.user-area .badge{background:#fff;color:#172b45;border:1px solid rgba(255,255,255,.9);font-weight:800;text-shadow:none;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.user-area #currentRole{background:#ffe3a3;color:#503500;border-color:#ffd36a;max-width:190px;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
+.user-area #pcpSyncStatus{background:#d9f4e6;color:#075b36;border-color:#a8dfc2}
+.user-area #currentUser{color:#fff;font-weight:800;text-shadow:0 1px 2px rgba(0,0,0,.35)}
 .chart-bars{display:flex;flex-direction:column;gap:9px}
 .bar-row{display:grid;grid-template-columns:110px 1fr 40px;gap:8px;align-items:center;font-size:12px}
 .bar-track{height:15px;background:#edf0f3;border:1px solid var(--line)}
@@ -220,7 +224,7 @@ tr.resolved-row td { background:#e2f0d9!important; }
      <div class="actions">
       <button class="btn" id="clearPresenceFilters">Limpar filtros</button>
       <button class="btn btn-primary" id="addEmployee">+ Adicionar colaborador</button>
-      <button class="btn btn-blue" id="savePresence">Aprovar apontamento</button>
+      <button class="btn btn-blue" id="savePresence">Salvar e aprovar apontamento</button>
       <button class="btn" id="exportPresence">Exportar CSV</button>
       <button class="btn" id="importButton">Importar CSV</button>
       <input type="file" id="importFile" accept=".csv,text/csv" class="hidden">
@@ -447,6 +451,10 @@ let pcpSyncTimer = null;
 let pcpSyncQueue = new Map();
 let pcpSyncBusy = false;
 let pcpLastError = "";
+let pcpRealtimeChannel = null;
+let pcpRealtimeActive = false;
+let pcpFallbackTimer = null;
+let pcpFallbackBusy = false;
 
 function pcpSetStatus(label, title) {
  const el = document.getElementById("pcpSyncStatus");
@@ -531,9 +539,52 @@ function pcpApplyRemoteChange(key, value, deleted=false) {
   if(key.endsWith(activeKey)){loadPresence();renderPresence();updateDashboard();renderCompletion();}
  }
 }
+function pcpApplyRemoteSnapshot(rows) {
+ const remoteKeys=new Set();
+ for(const row of (rows||[])) {
+  if(!row || !row.key) continue;
+  remoteKeys.add(row.key);
+  if(pcpSyncQueue.has(row.key)) continue;
+  const storageKey=APP_STORAGE_PREFIX+row.key;
+  const next=JSON.stringify(row.value);
+  if(localStorage.getItem(storageKey)===next) continue;
+  localStorage.setItem(storageKey,next);
+  pcpApplyRemoteChange(row.key,row.value,false);
+ }
+ // Trata também exclusões feitas em outro aparelho, sem apagar gravações pendentes locais.
+ for(let i=localStorage.length-1;i>=0;i--) {
+  const storageKey=localStorage.key(i);
+  if(!storageKey || !storageKey.startsWith(APP_STORAGE_PREFIX)) continue;
+  const key=storageKey.slice(APP_STORAGE_PREFIX.length);
+  if(remoteKeys.has(key) || pcpSyncQueue.has(key)) continue;
+  localStorage.removeItem(storageKey);
+  pcpApplyRemoteChange(key,null,true);
+ }
+}
+async function pcpFallbackSync() {
+ if(!pcpClient || pcpRealtimeActive || pcpFallbackBusy) return;
+ pcpFallbackBusy=true;
+ try {
+  const {data,error}=await pcpClient.from(PCP_TABLE).select("key,value");
+  if(error) throw error;
+  pcpApplyRemoteSnapshot(data||[]);
+  pcpSetStatus("SINCRONIZADO","Sincronização de contingência ativa. O sistema está conferindo alterações automaticamente enquanto o canal em tempo real reconecta.");
+ } catch(err) {
+  pcpSetStatus("SEM SINCRONIA",err?.message||"Falha ao consultar alterações remotas.");
+ } finally { pcpFallbackBusy=false; }
+}
+function pcpStartFallback() {
+ if(pcpFallbackTimer || pcpRealtimeActive) return;
+ // Consulta somente quando o WebSocket do Realtime não está conectado.
+ pcpFallbackTimer=setInterval(pcpFallbackSync,12000);
+ pcpFallbackSync();
+}
+function pcpStopFallback() {
+ if(pcpFallbackTimer){clearInterval(pcpFallbackTimer);pcpFallbackTimer=null;}
+}
 function pcpStartRealtime() {
- if(!pcpClient) return;
- pcpClient.channel("pcp-central-sync")
+ if(!pcpClient || pcpRealtimeChannel) return;
+ pcpRealtimeChannel=pcpClient.channel("pcp-central-sync")
   .on("postgres_changes",{event:"*",schema:"public",table:PCP_TABLE},payload=>{
    const row=payload.new||payload.old;
    if(!row?.key) return;
@@ -546,15 +597,22 @@ function pcpStartRealtime() {
     return;
    }
    const next=JSON.stringify(row.value);
-   // Não deixa uma atualização remota atrasada sobrescrever uma edição local
-   // que ainda está aguardando envio ao Supabase.
    if(pcpSyncQueue.has(row.key)) return;
-   // Ignora o eco da própria gravação: o valor já está no armazenamento local.
    if(localStorage.getItem(storageKey)===next) return;
    localStorage.setItem(storageKey,next);
    pcpApplyRemoteChange(row.key,row.value,false);
   })
-  .subscribe(status=>{if(status==="SUBSCRIBED")pcpSetStatus("CONECTADO","Sincronização em tempo real ativa, sem recarregar a página.");});
+  .subscribe(status=>{
+   if(status==="SUBSCRIBED") {
+    pcpRealtimeActive=true;
+    pcpStopFallback();
+    pcpSetStatus("TEMPO REAL","Conectado: alterações de todos os aparelhos aparecem automaticamente, sem atualizar a página.");
+   } else if(["CHANNEL_ERROR","TIMED_OUT","CLOSED"].includes(status)) {
+    pcpRealtimeActive=false;
+    pcpSetStatus("RECONECTANDO","Canal em tempo real indisponível. Ativando sincronização automática de segurança.");
+    pcpStartFallback();
+   }
+  });
 }
 
 if (await pcpBootstrap()) {
@@ -647,19 +705,31 @@ function todayISO(){const d=new Date();return `${d.getFullYear()}-${String(d.get
 function escapeHTML(value){return String(value??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 function canAdmin(){return currentUser?.role==="admin"}
 function roleRank(role){
- if(role==="admin"||role==="GERENTE")return 9;
- const ranks={"AUXILIAR DE OPERAÇÕES":1,"AUXILIAR ADMINISTRATIVO":1,"ASSISTENTE ADMINISTRATIVO":1,"ANALISTA":2,"ESPECIALISTA":3,"LÍDER DE OPERAÇÕES":4,"leader":4,"SUPERVISOR DE OPERAÇÕES":5,"COORDENADOR DE OPERAÇÕES":6};
- return ranks[String(role||"").toUpperCase()]||0;
+ const normalized=String(role||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim().toUpperCase();
+ if(normalized==="ADMIN"||normalized==="GERENTE")return 9;
+ const ranks={"AUXILIAR DE OPERACOES":1,"AUXILIAR ADMINISTRATIVO":1,"ASSISTENTE ADMINISTRATIVO":1,"ANALISTA":2,"ESPECIALISTA":3,"LIDER DE OPERACOES":4,"LEADER":4,"SUPERVISOR DE OPERACOES":5,"COORDENADOR DE OPERACOES":6};
+ return ranks[normalized]||0;
 }
 function canLead(){return canAdmin()||roleRank(currentUser?.role)>=4}
 function canEditEmployee(emp){return canLead()}
 // Apontamento de presença: ADMIN e SUPERVISOR+ podem lançar em qualquer equipe.
 // Líderes continuam restritos aos colaboradores vinculados ao seu próprio gestor.
+function normalizeManagerKey(value){
+ return String(value||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim().toUpperCase().replace(/\s+/g," ");
+}
+function currentUserManagerKey(){
+ // managerKey é a referência principal. Para contas antigas sem esse campo,
+ // usa o primeiro nome cadastrado (ex.: "Edinei Ribeiro" -> "EDINEI").
+ const explicit=normalizeManagerKey(currentUser?.managerKey);
+ if(explicit && explicit!=="*") return explicit;
+ const name=normalizeManagerKey(currentUser?.name);
+ return name.split(" ")[0]||"";
+}
 function canEditPresence(emp){
  if(!currentUser)return false;
  if(canAdmin()||roleRank(currentUser.role)>=5)return true;
- const ownManager=String(currentUser.managerKey||currentUser.name||"").trim().toUpperCase();
- const employeeManager=String(emp?.manager||"").trim().toUpperCase();
+ const ownManager=currentUserManagerKey();
+ const employeeManager=normalizeManagerKey(emp?.manager);
  return !!ownManager&&!!employeeManager&&ownManager===employeeManager;
 }
 function canAccessDiaristas(){return canLead()}
@@ -789,8 +859,16 @@ function renderPresence(){
    const input=document.createElement("input");input.setAttribute("list","statusOptions");input.setAttribute("aria-label",`Status ${emp.name} dia ${d}`);input.maxLength=8;input.value=val;input.placeholder="—";
    input.disabled=!canEditPresence(emp);
    const applyStatus=()=>{
-    if(!canEditPresence(emp)){input.value=presence[emp.id]?.[d]||"";notify("Você só pode apontar colaboradores da sua equipe. Supervisor e administrador podem apontar em todas as equipes.");return}
-    const code=input.value.trim().toUpperCase();input.value=STATUSES.includes(code)?code:"";presence[emp.id]??={};const key=`${emp.id}|${d}`;if(input.value){presence[emp.id][d]=input.value;approvals[key]={status:"pending",by:currentUser?.name||"Usuário",at:new Date().toISOString()}}else{delete presence[emp.id][d];delete approvals[key]}td.className="status-cell"+(input.value?" status-"+input.value+" approval-pending":"");savePresence(false)
+    if(!canEditPresence(emp)){input.value=presence[emp.id]?.[d]||"";notify("Acesso restrito: líder edita somente a própria equipe; supervisor e administrador editam todas as equipes.");return}
+    const codeRaw=input.value.trim().toUpperCase();const code=STATUSES.includes(codeRaw)?codeRaw:"";input.value=code;
+    const previous=presence[emp.id]?.[d]||"";const approvalKey=`${emp.id}|${d}`;const wasApproved=approvals[approvalKey]?.status==="approved";
+    if(code===previous)return;
+    presence[emp.id]??={};
+    if(code){presence[emp.id][d]=code;approvals[approvalKey]={status:"pending",by:currentUser?.name||"Usuário",at:new Date().toISOString(),editedAfterApproval:wasApproved};}
+    else{delete presence[emp.id][d];delete approvals[approvalKey];}
+    td.className="status-cell"+(code?" status-"+code+" approval-pending":"");
+    savePresence(false);
+    if(wasApproved&&code)notify("Apontamento alterado e salvo. Voltou para PENDENTE: clique em ‘Aprovar apontamento’ para confirmar novamente.");
    };
    input.addEventListener("change",applyStatus);input.addEventListener("blur",applyStatus);input.addEventListener("keydown",e=>{
     if(e.key==="Enter"){
@@ -838,8 +916,9 @@ function approvePresence(){
  if(selectedPeriod!==periodKey(currentPeriod.year,currentPeriod.month)){notify("Selecione uma data do mês que está aberto na planilha.");return}
  const day=Number(selectedDate.slice(8,10));let count=0;
  employees.forEach(emp=>{
-  const belongsToLeader=canAdmin()||String(emp.manager||"").trim().toUpperCase()===String(currentUser.managerKey||"").trim().toUpperCase();
-  if(!belongsToLeader||!presence[emp.id]?.[day])return;
+  // A mesma regra de equipe vale para editar e aprovar: líder na própria equipe;
+  // supervisor/coordenador/gerente e ADMIN podem aprovar em todas.
+  if(!canEditPresence(emp)||!presence[emp.id]?.[day])return;
   const key=`${emp.id}|${day}`;
   if(approvals[key]?.status!=="approved"){approvals[key]={status:"approved",by:currentUser.name,at:new Date().toISOString()};count++}
  });
