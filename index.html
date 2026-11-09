@@ -445,17 +445,29 @@ const SUPABASE_URL = "https://dlownklhwkatjnjwiqst.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_V1Hktkj_7DKy7aY0uISN7A_KiR7YU9g";
 const APP_STORAGE_PREFIX = "ics_pcp_v2_";
 const PCP_TABLE = "pcp_app_state";
+const PCP_PENDING_KEY = "pcp_pending_sync_v1";
 let pcpClient = null;
 let pcpRemoteReady = false;
 let pcpSyncTimer = null;
 let pcpSyncQueue = new Map();
 let pcpSyncBusy = false;
-let pcpSyncRetryDelay = 1500;
 let pcpLastError = "";
 let pcpRealtimeChannel = null;
 let pcpRealtimeActive = false;
 let pcpFallbackTimer = null;
 let pcpFallbackBusy = false;
+let pcpRealtimeRetryTimer = null;
+let pcpBootstrapRetryTimer = null;
+let pcpRealtimeWatchdogTimer = null;
+let pcpSyncRetryDelay = 1200;
+let pcpAppInitialized = false;
+// Recupera gravações que ainda não tinham recebido confirmação antes de fechar/atualizar.
+try {
+ const savedQueue=JSON.parse(localStorage.getItem(PCP_PENDING_KEY)||"{}");
+ for(const [key,entry] of Object.entries(savedQueue||{})) {
+  if(entry && Object.prototype.hasOwnProperty.call(entry,"value")) pcpSyncQueue.set(key,entry);
+ }
+} catch(_) { localStorage.removeItem(PCP_PENDING_KEY); }
 
 function pcpSetStatus(label, title) {
  const el = document.getElementById("pcpSyncStatus");
@@ -476,36 +488,60 @@ async function pcpBootstrap() {
   pcpSetStatus("SEM CHAVE","Cole a chave publishable do Supabase no início do arquivo.");
   return true;
  }
+ if(pcpRemoteReady) return true;
  try {
   pcpSetStatus("CONECTANDO","Conectando ao banco central PCP...");
-  pcpClient=createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{persistSession:false,autoRefreshToken:false},realtime:{params:{eventsPerSecond:2}}});
+  if(!pcpClient) pcpClient=createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{persistSession:false,autoRefreshToken:false},realtime:{params:{eventsPerSecond:10}}});
   const {data,error}=await pcpClient.from(PCP_TABLE).select("key,value");
   if(error) throw error;
-  if(data && data.length) {
-   const remoteKeys=new Set(data.map(r=>APP_STORAGE_PREFIX+r.key));
-   for(let i=localStorage.length-1;i>=0;i--){const k=localStorage.key(i);if(k&&k.startsWith(APP_STORAGE_PREFIX)&&!remoteKeys.has(k))localStorage.removeItem(k);}
-   for(const row of data) localStorage.setItem(APP_STORAGE_PREFIX+row.key,JSON.stringify(row.value));
+  const rows=data||[];
+  const remoteKeys=new Set(rows.map(r=>r.key));
+  if(rows.length) {
+   for(const row of rows) {
+    const pending=pcpSyncQueue.get(row.key);
+    if(pending) {
+     const merged=pcpMergeDelta(pending.base,pending.value,row.value);
+     pending.base=row.value;
+     pending.value=merged;
+     localStorage.setItem(APP_STORAGE_PREFIX+row.key,JSON.stringify(merged));
+     if(pcpAppInitialized) pcpApplyRemoteChange(row.key,merged,false);
+    } else {
+     localStorage.setItem(APP_STORAGE_PREFIX+row.key,JSON.stringify(row.value));
+     if(pcpAppInitialized) pcpApplyRemoteChange(row.key,row.value,false);
+    }
+   }
+   // Não apaga do navegador nenhuma chave que ainda esteja aguardando envio.
+   for(let i=localStorage.length-1;i>=0;i--) {
+    const k=localStorage.key(i);
+    if(k&&k.startsWith(APP_STORAGE_PREFIX)) {
+     const key=k.slice(APP_STORAGE_PREFIX.length);
+     if(!remoteKeys.has(key)&&!pcpSyncQueue.has(key)) localStorage.removeItem(k);
+    }
+   }
   } else {
-   // Primeira conexão: aproveita dados já existentes neste navegador.
    const existing=pcpLocalEntries();
-   if(existing.length){const {error:seedError}=await pcpClient.from(PCP_TABLE).upsert(existing,{onConflict:"key"});if(seedError)throw seedError;}
+   if(existing.length) {
+    const {error:seedError}=await pcpClient.from(PCP_TABLE).upsert(existing,{onConflict:"key"});
+    if(seedError) throw seedError;
+   }
   }
   pcpRemoteReady=true;
-  pcpSetStatus("CONECTADO","Dados carregados do Supabase. Sincronização automática ativa.");
+  pcpPersistQueue();
+  pcpSetStatus("CONECTADO","Banco central conectado. Alterações pendentes serão enviadas e distribuídas aos demais aparelhos.");
+  if(pcpSyncQueue.size){clearTimeout(pcpSyncTimer);pcpSyncTimer=setTimeout(pcpFlushSync,80);}
   return true;
  } catch(err) {
   pcpLastError=err?.message||String(err);
   pcpRemoteReady=false;
-  pcpSetStatus("ERRO SUPABASE",pcpLastError);
+  pcpSetStatus("SEM CONEXÃO",pcpLastError);
   console.error("PCP Supabase:",err);
-  return true; // mantém o sistema local disponível até corrigir a configuração
+  return true; // mantém o login original e preserva as alterações locais.
  }
 }
 function pcpJsonEqual(a,b){
  try{return JSON.stringify(a)===JSON.stringify(b)}catch(_){return a===b}
 }
-// Mescla somente o que este aparelho realmente alterou desde sua versão-base.
-// Assim, uma edição em um colaborador não apaga a edição de outro feita em outro aparelho.
+// Mescla alterações por ID/campo para que duas pessoas não apaguem edições diferentes.
 function pcpMergeDelta(base,local,remote){
  if(pcpJsonEqual(base,local)) return remote===undefined?local:remote;
  if(Array.isArray(local) && (base===undefined || Array.isArray(base)) && (remote===undefined || Array.isArray(remote))){
@@ -538,50 +574,55 @@ function pcpMergeDelta(base,local,remote){
  }
  return local;
 }
-async function pcpFlushSync() {
- if(!pcpRemoteReady || !pcpClient || pcpSyncBusy || !pcpSyncQueue.size) return;
+function pcpPersistQueue(){
+ try{
+  const obj={};
+  for(const [key,entry] of pcpSyncQueue.entries()) obj[key]=entry;
+  if(Object.keys(obj).length) localStorage.setItem(PCP_PENDING_KEY,JSON.stringify(obj));
+  else localStorage.removeItem(PCP_PENDING_KEY);
+ }catch(err){console.error("PCP fila local:",err);}
+}
+async function pcpFlushSync(){
+ if(!pcpRemoteReady||!pcpClient||pcpSyncBusy||!pcpSyncQueue.size)return;
  pcpSyncBusy=true;
- const batch=[...pcpSyncQueue.entries()].map(([key,entry])=>({key,base:entry.base,value:entry.value}));
- batch.forEach(x=>pcpSyncQueue.delete(x.key));
- try {
-  // Busca a versão mais recente antes de gravar e mescla alterações por ID/campo.
+ const batch=[...pcpSyncQueue.entries()].map(([key,entry])=>({key,entry,base:entry.base,value:entry.value}));
+ try{
   const keys=batch.map(x=>x.key);
   const {data:latestRows,error:readError}=await pcpClient.from(PCP_TABLE).select("key,value").in("key",keys);
-  if(readError) throw readError;
+  if(readError)throw readError;
   const latest=new Map((latestRows||[]).map(r=>[r.key,r.value]));
   const writes=batch.map(x=>({key:x.key,value:pcpMergeDelta(x.base,x.value,latest.get(x.key))}));
   const {error}=await pcpClient.from(PCP_TABLE).upsert(writes,{onConflict:"key"});
-  if(error) throw error;
-  pcpSyncRetryDelay=1500;
+  if(error)throw error;
+  pcpSyncRetryDelay=1200;
   for(const row of writes){
-   // Não substitui uma edição mais nova que tenha sido feita enquanto o envio ocorria.
-   if(!pcpSyncQueue.has(row.key)){
+   const sent=batch.find(x=>x.key===row.key);
+   const current=pcpSyncQueue.get(row.key);
+   if(current===sent?.entry){
+    pcpSyncQueue.delete(row.key);
     localStorage.setItem(APP_STORAGE_PREFIX+row.key,JSON.stringify(row.value));
     pcpApplyRemoteChange(row.key,row.value,false);
-   } else {
-    const queued=pcpSyncQueue.get(row.key);queued.base=row.value;
-   }
+   }else if(current){current.base=row.value;}
   }
-  pcpSetStatus("SALVO","Alterações confirmadas no Supabase.");
- } catch(err) {
-  for(const x of batch){
-   if(!pcpSyncQueue.has(x.key)) pcpSyncQueue.set(x.key,{base:x.base,value:x.value});
-  }
-  pcpSyncRetryDelay=Math.min(Math.max(pcpSyncRetryDelay*2,2500),30000);
+  pcpPersistQueue();
+  pcpSetStatus(pcpSyncQueue.size?"SALVANDO":"SALVO",pcpSyncQueue.size?"Há uma nova alteração aguardando confirmação do Supabase.":"Gravação confirmada no Supabase.");
+ }catch(err){
+  pcpPersistQueue();
+  pcpSyncRetryDelay=Math.min(Math.max(pcpSyncRetryDelay*2,1800),15000);
   pcpSetStatus("ERRO AO SALVAR",err?.message||String(err));
   console.error("PCP sincronização:",err);
- } finally {
+ }finally{
   pcpSyncBusy=false;
   if(pcpSyncQueue.size){clearTimeout(pcpSyncTimer);pcpSyncTimer=setTimeout(pcpFlushSync,pcpSyncRetryDelay);}
  }
 }
-function pcpQueueSync(key,value,baseValue) {
- if(!pcpRemoteReady) return;
+function pcpQueueSync(key,value,baseValue){
  const previous=pcpSyncQueue.get(key);
  pcpSyncQueue.set(key,{base:previous?previous.base:baseValue,value:structuredCloneSafe(value)});
- pcpSetStatus("SALVANDO","Alteração na fila para confirmação do Supabase.");
+ pcpPersistQueue();
+ pcpSetStatus(pcpRemoteReady?"SALVANDO":"AGUARDANDO REDE",pcpRemoteReady?"Enviando alteração ao Supabase.":"Alteração guardada neste aparelho; será enviada quando o Supabase conectar.");
  clearTimeout(pcpSyncTimer);
- pcpSyncTimer=setTimeout(pcpFlushSync,120);
+ if(pcpRemoteReady) pcpSyncTimer=setTimeout(pcpFlushSync,80);
 }
 function pcpApplyRemoteChange(key, value, deleted=false) {
  const empty = deleted ? null : value;
@@ -620,60 +661,99 @@ function pcpApplyRemoteSnapshot(rows) {
   pcpApplyRemoteChange(key,null,true);
  }
 }
-async function pcpFallbackSync() {
- if(!pcpClient || pcpRealtimeActive || pcpFallbackBusy) return;
+async function pcpFallbackSync(){
+ if(!pcpClient||pcpRealtimeActive||pcpFallbackBusy)return;
  pcpFallbackBusy=true;
- try {
+ try{
   const {data,error}=await pcpClient.from(PCP_TABLE).select("key,value");
-  if(error) throw error;
+  if(error)throw error;
   pcpApplyRemoteSnapshot(data||[]);
-  pcpSetStatus("SINCRONIZADO","Sincronização de contingência ativa. O sistema está conferindo alterações automaticamente enquanto o canal em tempo real reconecta.");
- } catch(err) {
-  pcpSetStatus("SEM SINCRONIA",err?.message||"Falha ao consultar alterações remotas.");
- } finally { pcpFallbackBusy=false; }
+  pcpSetStatus("SINCRONIZADO","Conferência temporária ativa enquanto o Realtime reconecta.");
+ }catch(err){pcpSetStatus("SEM SINCRONIA",err?.message||"Falha ao consultar alterações remotas.");}
+ finally{pcpFallbackBusy=false;}
 }
-function pcpStartFallback() {
- if(pcpFallbackTimer || pcpRealtimeActive) return;
- // Consulta somente quando o WebSocket do Realtime não está conectado.
- pcpFallbackTimer=setInterval(pcpFallbackSync,12000);
+function pcpStartFallback(){
+ if(pcpFallbackTimer||pcpRealtimeActive)return;
+ pcpFallbackTimer=setInterval(pcpFallbackSync,8000);
  pcpFallbackSync();
 }
-function pcpStopFallback() {
- if(pcpFallbackTimer){clearInterval(pcpFallbackTimer);pcpFallbackTimer=null;}
+function pcpStopFallback(){if(pcpFallbackTimer){clearInterval(pcpFallbackTimer);pcpFallbackTimer=null;}}
+async function pcpRefreshSnapshot(){
+ if(!pcpClient||!pcpRemoteReady)return;
+ try{
+  const {data,error}=await pcpClient.from(PCP_TABLE).select("key,value");
+  if(error)throw error;
+  pcpApplyRemoteSnapshot(data||[]);
+ }catch(err){console.warn("PCP reconciliação:",err);}
 }
-function pcpStartRealtime() {
- if(!pcpClient || pcpRealtimeChannel) return;
- pcpRealtimeChannel=pcpClient.channel("pcp-central-sync")
+function pcpScheduleRealtimeRetry(delay=3000){
+ if(pcpRealtimeRetryTimer)return;
+ pcpRealtimeRetryTimer=setTimeout(async()=>{
+  pcpRealtimeRetryTimer=null;
+  const old=pcpRealtimeChannel;
+  pcpRealtimeChannel=null;
+  pcpRealtimeActive=false;
+  if(old){try{await old.unsubscribe();}catch(_){} try{await pcpClient.removeChannel(old);}catch(_){}}
+  pcpStartRealtime();
+ },delay);
+}
+function pcpStartRealtime(){
+ if(!pcpClient||pcpRealtimeChannel||!pcpRemoteReady)return;
+ const channel=pcpClient.channel("pcp-central-sync-v2")
   .on("postgres_changes",{event:"*",schema:"public",table:PCP_TABLE},payload=>{
    const row=payload.new||payload.old;
-   if(!row?.key) return;
+   if(!row?.key)return;
    const storageKey=APP_STORAGE_PREFIX+row.key;
-   if(payload.eventType==="DELETE") {
-    if(localStorage.getItem(storageKey)!==null){
-     localStorage.removeItem(storageKey);
-     pcpApplyRemoteChange(row.key,null,true);
-    }
+   if(payload.eventType==="DELETE"){
+    if(pcpSyncQueue.has(row.key))return;
+    if(localStorage.getItem(storageKey)!==null){localStorage.removeItem(storageKey);pcpApplyRemoteChange(row.key,null,true);}
     return;
    }
-   const next=JSON.stringify(row.value);
-   if(pcpSyncQueue.has(row.key)) return;
-   if(localStorage.getItem(storageKey)===next) return;
-   localStorage.setItem(storageKey,next);
-   pcpApplyRemoteChange(row.key,row.value,false);
-  })
-  .subscribe(status=>{
-   if(status==="SUBSCRIBED") {
-    pcpRealtimeActive=true;
-    pcpStopFallback();
-    pcpSetStatus("TEMPO REAL","Conectado: alterações de todos os aparelhos aparecem automaticamente, sem atualizar a página.");
-   } else if(["CHANNEL_ERROR","TIMED_OUT","CLOSED"].includes(status)) {
-    pcpRealtimeActive=false;
-    pcpSetStatus("RECONECTANDO","Canal em tempo real indisponível. Ativando sincronização automática de segurança.");
-    pcpStartFallback();
+   const pending=pcpSyncQueue.get(row.key);
+   if(pending){
+    const merged=pcpMergeDelta(pending.base,pending.value,row.value);
+    pending.base=row.value;pending.value=merged;
+    localStorage.setItem(storageKey,JSON.stringify(merged));
+    pcpPersistQueue();pcpApplyRemoteChange(row.key,merged,false);return;
    }
+   const next=JSON.stringify(row.value);
+   if(localStorage.getItem(storageKey)===next)return;
+   localStorage.setItem(storageKey,next);pcpApplyRemoteChange(row.key,row.value,false);
   });
+ pcpRealtimeChannel=channel;
+ if(pcpRealtimeWatchdogTimer)clearTimeout(pcpRealtimeWatchdogTimer);
+ pcpRealtimeWatchdogTimer=setTimeout(()=>{
+  pcpRealtimeWatchdogTimer=null;
+  if(pcpRealtimeChannel===channel&&!pcpRealtimeActive){
+   pcpSetStatus("SINCRONIZANDO","Realtime ainda não confirmou conexão; conferindo o banco temporariamente.");
+   pcpStartFallback();pcpScheduleRealtimeRetry(5000);
+  }
+ },7000);
+ channel.subscribe(status=>{
+  if(pcpRealtimeChannel!==channel)return;
+  if(status==="SUBSCRIBED"){
+   pcpRealtimeActive=true;
+   if(pcpRealtimeWatchdogTimer){clearTimeout(pcpRealtimeWatchdogTimer);pcpRealtimeWatchdogTimer=null;}
+   pcpStopFallback();
+   pcpSetStatus("TEMPO REAL","Conectado. Alterações confirmadas no Supabase são distribuídas aos outros aparelhos.");
+   pcpRefreshSnapshot();
+   if(pcpSyncQueue.size){clearTimeout(pcpSyncTimer);pcpSyncTimer=setTimeout(pcpFlushSync,80);}
+  }else if(["CHANNEL_ERROR","TIMED_OUT","CLOSED"].includes(status)){
+   pcpRealtimeActive=false;
+   if(pcpRealtimeWatchdogTimer){clearTimeout(pcpRealtimeWatchdogTimer);pcpRealtimeWatchdogTimer=null;}
+   pcpSetStatus("RECONECTANDO","Canal Realtime indisponível; as alterações ficam protegidas e haverá nova tentativa.");
+   pcpStartFallback();pcpScheduleRealtimeRetry(3000);
+  }
+ });
 }
-
+function pcpStartBootstrapRetry(){
+ if(pcpBootstrapRetryTimer||pcpRemoteReady)return;
+ pcpBootstrapRetryTimer=setInterval(async()=>{
+  if(pcpRemoteReady){clearInterval(pcpBootstrapRetryTimer);pcpBootstrapRetryTimer=null;return;}
+  await pcpBootstrap();
+  if(pcpRemoteReady){clearInterval(pcpBootstrapRetryTimer);pcpBootstrapRetryTimer=null;pcpStartRealtime();}
+ },5000);
+}
 if (await pcpBootstrap()) {
 /*
   CONFIGURAÇÃO SUPABASE
@@ -700,7 +780,6 @@ let users = hasSavedUsers && Array.isArray(savedUsers)
 // Repara IDs repetidos: dois usuários com o mesmo ID eram editados juntos.
 // Mantém o primeiro ID (inclusive para não quebrar a sessão atual) e cria IDs
 // próprios para os demais registros duplicados.
-let usersNeedRepair=false;
 (function repairUserIdentityAndRoles(){
  const seen=new Set();
  users=users.map((u,index)=>{
@@ -709,25 +788,25 @@ let usersNeedRepair=false;
   if(!id||seen.has(id)){
    let candidate=`usr-reparado-${Date.now()}-${index}`;
    while(seen.has(candidate))candidate+="x";
-   id=candidate;usersNeedRepair=true;
+   id=candidate;
   }
   item.id=id;seen.add(id);
   return item;
  });
- // Não força nome/cargo de nenhuma conta ao iniciar: alterações feitas pelo ADMIN
- // precisam permanecer exatamente como foram salvas.
+ // A conta do Rauan fica como supervisor, sem permissão administrativa.
  const rauan=users.find(u=>String(u.login||"").toLowerCase()==="rauan.santos")
    ||users.find(u=>/rauan/i.test(String(u.name||"")));
+ if(rauan){rauan.name="RAUAN BRUCE";rauan.role="SUPERVISOR DE OPERAÇÕES";}
+ // Garante uma conta ADMIN separada. Se já existir outro administrador,
+ // preserva seus dados e credenciais sem alterá-los.
  const separateAdmin=users.find(u=>u!==rauan&&String(u.role||"").toLowerCase()==="admin");
  if(!separateAdmin){
   const existing=users.find(u=>u!==rauan&&String(u.login||"").toLowerCase()==="admin");
-  if(existing){existing.role="admin";existing.enabled=true;usersNeedRepair=true;}
-  else {users.push({id:"admin-principal-pcp",name:"ADMINISTRADOR",login:"admin",password:"Admin@2027",role:"admin",managerKey:"*",enabled:true});usersNeedRepair=true;}
+  if(existing){existing.role="admin";existing.enabled=true;}
+  else users.push({id:"admin-principal-pcp",name:"ADMINISTRADOR",login:"admin",password:"Admin@2027",role:"admin",managerKey:"*",enabled:true});
  }
 })();
-// Só grava os padrões na primeira instalação ou uma reparação de IDs/conta admin.
-// Nunca regrava a lista inteira em todo carregamento, pois isso desfazia edições.
-if(!hasSavedUsers||usersNeedRepair) store("users",users);
+store("users",users);
 const DEFAULT_EMPLOYEES = [{"id":"sheet-50685","mat":"50685","name":"ESTER FEITOZA OLIVEIRA RODRIGUES","job":"ASSISTENTE ADMINISTRATIVO","shift":"1ºT","scale":"Seg - Sex - 07:00 às 16:48","manager":"ANDREW"},{"id":"sheet-67526","mat":"67526","name":"LUIS DE SOUSA LIMA","job":"OPERADOR DE EMPILHADEIRA","shift":"1ºT","scale":"Seg - Sex - 07:00 às 16:48","manager":"EDINEI"},{"id":"sheet-71664","mat":"71664","name":"DANILLO JESUS DE ARAUJO","job":"OPERADOR DE TRANSPALETEIRA","shift":"1ºT","scale":"Ter - Sáb - 08:00 às 17:48","manager":"EDINEI"},{"id":"sheet-524180","mat":"524180","name":"EDINEI NASCIMENTO RIBEIRO","job":"LIDER DE OPERACOES","shift":"1ºT","scale":"Seg - Sex - 07:00 às 16:48","manager":"RAUAN"},{"id":"sheet-532323","mat":"532323","name":"DENISE APARECIDA NASCIMENTO DOS SANTOS","job":"ASSISTENTE DE OPERACOES","shift":"1ºT","scale":"Dom - Qui - 07:00 às 16:48","manager":"EDER"},{"id":"sheet-532687","mat":"532687","name":"MARIA APARECIDA ALVES DA SILVA","job":"AUXILIAR DE OPERACOES","shift":"1ºT","scale":"Qua - Dom - 08:00 às 17:48","manager":"ANDERSON"},{"id":"sheet-540516","mat":"540516","name":"MARLI VEIGA DE SOUZA","job":"AUXILIAR DE OPERACOES","shift":"1ºT","scale":"Ter - Sáb - 08:00 às 17:48","manager":"SAMUEL"},{"id":"sheet-541110","mat":"541110","name":"ABNER DE LIMA SILVA","job":"AUXILIAR DE OPERACOES","shift":"1ºT","scale":"Ter - Sáb - 22:00 às 07:00","manager":"EDER"},{"id":"sheet-517896","mat":"517896","name":"JOSE ROBERTO DA SILVA JUNIOR","job":"ASSISTENTE ADMINISTRATIVO","shift":"1ºT","scale":"seg - Sex - 08:00 ás 17:48","manager":"ANDREW"},{"id":"sheet-545910","mat":"545910","name":"MAYARA GALVAO FREITAS","job":"AUXILIAR DE OPERACOES","shift":"1ºT","scale":"Seg - Sex - 10:00 às 19:48","manager":""},{"id":"sheet-547583","mat":"547583","name":"MATHEUS SANT ANNA DE PAULA","job":"AUXILIAR DE OPERACOES","shift":"1ºT","scale":"Seg - Sex - 12:00 às 21:48","manager":"EDINEI"},{"id":"sheet-524320","mat":"524320","name":"GEOVANA BARBOSA SANTANA QUEIROZ","job":"LIDER DE OPERACOES","shift":"3ºT","scale":"Ter - Sáb - 22:00 às 07:00","manager":"VAN"},{"id":"sheet-524336","mat":"524336","name":"MARIA TATIANA RODRIGUES DE OLIVEIRA","job":"LIDER DE OPERACOES","shift":"3ºT","scale":"Seg - Sex - 10:00 às 19:48","manager":"VAN"},{"id":"sheet-549117","mat":"549117","name":"ALEX DA SILVA GOMES","job":"AUXILIAR DE OPERACOES","shift":"1ºT","scale":"Ter - Sáb - 08:00 às 17:48","manager":"EDINEI"},{"id":"sheet-524347","mat":"524347","name":"ALINE DE SOUZA SANTOS","job":"LIDER DE OPERACOES","shift":"3ºT","scale":"Seg - Sex - 12:00 às 21:48","manager":"VAN"},{"id":"sheet-550246","mat":"550246","name":"LUCAS MORAES DOS SANTOS","job":"ASSISTENTE DE OPERACOES","shift":"1ºT","scale":"Ter - Sáb - 08:00 às 17:48","manager":"SAMUEL"},{"id":"sheet-559191","mat":"559191","name":"MARIA LUISA DA CRUZ","job":"AUXILIAR DE OPERACOES","shift":"1ºT","scale":"Ter - Sáb - 08:00 às 17:48","manager":"ANDERSON"},{"id":"sheet-559684","mat":"559684","name":"JOSE ROBERTO CONCEICAO SANTOS","job":"AUXILIAR DE OPERACOES","shift":"1ºT","scale":"Ter - Sáb - 08:00 às 17:48","manager":"EDINEI"},{"id":"sheet-559687","mat":"559687","name":"LAILSON DOS SANTOS ROSA","job":"AUXILIAR DE OPERACOES","shift":"1ºT","scale":"Ter - Sáb - 08:00 às 17:48","manager":"EDER"},{"id":"sheet-566493","mat":"566493","name":"EDNA MIRELLY DE SOUZA DIAS","job":"AUXILIAR DE OPERACOES","shift":"1ºT","scale":"Seg - Sex - 12:00 às 21:48","manager":"EDINEI"},{"id":"sheet-539849","mat":"539849","name":"MITCHELL ALEX DE OLIVEIRA SANTOS","job":"ASSISTENTE DE OPERACOES","shift":"3ºT","scale":"Qua - Dom - 22:00 às 07:00","manager":""},{"id":"sheet-571497","mat":"571497","name":"MIGUEL JOABE CABRAL","job":"AUXILIAR DE OPERACOES","shift":"1ºT","scale":"Ter - Sáb - 08:00 às 17:48","manager":"EDINEI"},{"id":"sheet-573638","mat":"573638","name":"VITOR SANTANA DE JESUS","job":"AUXILIAR DE OPERACOES","shift":"1ºT","scale":"Seg - Sex - 12:00 às 21:48","manager":"EDER"},{"id":"sheet-541112","mat":"541112","name":"EVANDRO BARAUNA DA SILVA","job":"OPERADOR DE TRANSPALETEIRA","shift":"3ºT","scale":"Seg - Sex - 22:00 às 07:00","manager":""},{"id":"sheet-574131","mat":"574131","name":"ARIANA CLIS SILVA DOS SANTOS","job":"AUXILIAR DE OPERACOES","shift":"1ºT","scale":"","manager":"EDINEI"},{"id":"sheet-574380","mat":"574380","name":"LEONARDO SOARES DO CARMO","job":"AUXILIAR DE OPERACOES","shift":"1ºT","scale":"Ter - Sáb - 08:00 às 17:48","manager":"EDER"},{"id":"sheet-575034","mat":"575034","name":"NAYARA CANTARINI","job":"AUXILIAR DE OPERACOES","shift":"1ºT","scale":"","manager":""},{"id":"sheet-551827","mat":"551827","name":"VALDECI DE SOUZA SILVA","job":"AUXILIAR DE OPERACOES","shift":"1ºT","scale":"Qua - Dom - 08:00 às 17:48","manager":"EDER"},{"id":"sheet-573252","mat":"573252","name":"ANDREIA GONÇÃVES LOUZADO","job":"AUXILIAR DE OPERACOES","shift":"1ºT","scale":"Seg - Sex - 10:00 às 19:48","manager":""},{"id":"sheet-67529","mat":"67529","name":"WILLYAN BARROS DE JESUS","job":"ASSISTENTE DE OPERACOES","shift":"2ºT","scale":"Ter - Sáb - 12:00 às 21:48","manager":"SAMUEL"},{"id":"sheet-72637","mat":"72637","name":"LEONARDO LIMA RODRIGUES","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"Ter - Sáb - 08:00 às 17:48","manager":"EDINEI"},{"id":"sheet-516091","mat":"516091","name":"EDER ARRUDA DA SILVA","job":"LIDER DE OPERACOES","shift":"2ºT","scale":"Ter - Sáb - 08:00 às 17:48","manager":"RAUAN"},{"id":"sheet-551057","mat":"551057","name":"SUELI FRANCISCA DOS SANTOS","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Ter - Sáb - 22:00 às 07:00","manager":""},{"id":"sheet-553378","mat":"553378","name":"DARLENE DOURADO","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Seg - Sex - 22:00 às 07:00","manager":""},{"id":"sheet-516641","mat":"516641","name":"GABRIEL RODRIGUES DE CASTRO","job":"OPERADOR DE TRANSPALETEIRA","shift":"2ºT","scale":"Seg - Sex - 12:00 às 21:48","manager":"EDINEI"},{"id":"sheet-524308","mat":"524308","name":"DAIANA OLIVEIRA FRANCISCO","job":"ASSISTENTE DE OPERACOES","shift":"2ºT","scale":"Seg - Sex - 10:00 às 19:48","manager":"ANDERSON"},{"id":"sheet-524340","mat":"524340","name":"NATALIA SANTOS BITTO","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"Seg - Sex - 10:00 às 19:48","manager":"EDINEI"},{"id":"sheet-531450","mat":"531450","name":"MONICA OLIVEIRA E SILVA","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"Dom - Qui - 07:00 às 16:48","manager":""},{"id":"sheet-536469","mat":"536469","name":"NICKSON MAYER GONCALVES","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"Seg - Sex - 10:00 às 19:48","manager":"EDER"},{"id":"sheet-537075","mat":"537075","name":"ELIEZER RODRIGUES LIMA","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"Seg - Sex - 12:00 às 21:49","manager":"SAMUEL"},{"id":"sheet-547554","mat":"547554","name":"THAIS MARIANO SEVERO DOS SANTOS","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"Seg - Sex - 10:00 às 19:48","manager":"EDER"},{"id":"sheet-548752","mat":"548752","name":"MARIA DE LOURDES FLORO DE ARAUJO","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"Seg - Sex - 12:00 às 21:48","manager":"ANDERSON"},{"id":"sheet-567120","mat":"567120","name":"ELLEN CRISTINE FARIAS DE SANTANA","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Ter - Sáb - 22:00 às 07:00","manager":""},{"id":"sheet-570319","mat":"570319","name":"DAVI SANTOS VIEIRA","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Ter - Sáb - 22:00 às 07:00","manager":""},{"id":"sheet-570320","mat":"570320","name":"RAQUEL MARIA DA SILVA E SILVA","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Seg - Sex - 22:00 às 07:00","manager":""},{"id":"sheet-549160","mat":"549160","name":"MARILIA ARAUJO DE OLIVEIRA","job":"ASSISTENTE DE OPERACOES","shift":"2ºT","scale":"Ter - Sáb - 12:00 às 21:48","manager":"SAMUEL"},{"id":"sheet-571381","mat":"571381","name":"THAMIRES LIMA DA SILVA","job":"AUXILIAR DE OPERACOES","shift":"1ºT","scale":"Ter - Sáb - 08:00 às 17:48","manager":"EDER"},{"id":"sheet-549738","mat":"549738","name":"SAMUEL WICHARD TRAJANO DOS SANTOS","job":"LIDER DE OPERACOES","shift":"2ºT","scale":"Ter - Sáb - 12:00 às 21:48","manager":"RAUAN"},{"id":"sheet-556786","mat":"556786","name":"IZABEL MOREIRA DE ABREU","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"Qua - Dom - 12:00 às 21:48","manager":"ANDERSON"},{"id":"sheet-560786","mat":"560786","name":"AGATA FERREIRA DE SANTANA","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"Seg - Sex - 12:00 às 21:48","manager":"SAMUEL"},{"id":"sheet-565658","mat":"565658","name":"YANIRA DEL CARMEN SALAVERRIA HERRERA","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"Seg - Sex - 12:00 às 21:48","manager":"SAMUEL"},{"id":"sheet-566272","mat":"566272","name":"GABRIELLI PEREIRA","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"Seg - Sex - 10:00 às 19:48","manager":"EDINEI"},{"id":"sheet-567102","mat":"567102","name":"ALECIA DE SOUSA PAES LANDIM","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"Seg - Sex - 12:00 às 21:48","manager":"ANDERSON"},{"id":"sheet-570714","mat":"570714","name":"BIANCA LOPES SOUZA","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"Seg - Sex - 12:00 às 21:48","manager":"EDER"},{"id":"sheet-571523","mat":"571523","name":"ANDERSON ALVES DUARTE","job":"LIDER DE OPERACOES","shift":"2ºT","scale":"Sex - Ter - 12:00 ás 21:48","manager":"RAUAN"},{"id":"sheet-572504","mat":"572504","name":"CAMILLA APARECIDA DE OLIVEIRA SANTANA","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"Sex - Ter - 12:00 às 21:48","manager":"ANDERSON"},{"id":"sheet-574551","mat":"574551","name":"RAYSSA MARQUES SILVA","job":"AUXILIAR DE OPERACOES","shift":"1ºT","scale":"Qua - Dom - 08:00 às 17:48","manager":""},{"id":"sheet-572848","mat":"572848","name":"FLAVIR ELISABETE BARBOSA SCHONEVALD VACARI","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"Ter - Sáb - 08:00 às 17:48","manager":"EDER"},{"id":"sheet-577171","mat":"577171","name":"SHERYL ALEJANDRA BRAVO CANDIA","job":"AUXILIAR DE OPERACOES","shift":"1ºT","scale":"seg - Sex - 08:00 ás 17:48","manager":"EDER"},{"id":"sheet-575044","mat":"575044","name":"BRUNA FERNANDA MARTINS","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"Seg - Sex - 12:00 às 21:48","manager":"ANDERSON"},{"id":"sheet-574059","mat":"574059","name":"SILVANA DO RIO DOS SANTOS","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"Seg - Sex - 12:00 às 21:48","manager":"ANDERSON"},{"id":"sheet-575110","mat":"575110","name":"CLAUDILENE DA CONCEICAO BARBOSA","job":"AUXILIAR DE OPERACOES","shift":"-","scale":"","manager":""},{"id":"sheet-575123","mat":"575123","name":"LUCIANA MARQUES DE ASSUNCAO MORAES","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"Seg - Sex - 12:00 às 21:48","manager":""},{"id":"sheet-574068","mat":"574068","name":"CRISTINA VIEIRA DE CAMPOS","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"Seg - Sex - 10:00 às 19:48","manager":"EDINEI"},{"id":"sheet-575109","mat":"575109","name":"MARIA CAROLINE ALVES DE SOUSA","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"","manager":"ANDERSON"},{"id":"sheet-575135","mat":"575135","name":"WILLIAN SANTANA PEREIRA DA SILVA","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"Seg - Sex - 12:00 às 21:48","manager":""},{"id":"sheet-575285","mat":"575285","name":"DIEGO NASCIMENTO DA SILVA","job":"AUXILIAR DE OPERACOES","shift":"-","scale":"","manager":""},{"id":"sheet-575287","mat":"575287","name":"YASMIN DE FREITAS SANTIAGO","job":"AUXILIAR DE OPERACOES","shift":"-","scale":"","manager":""},{"id":"sheet-575301","mat":"575301","name":"DAYANE MILLENA DE PADUA","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Dom - Qui - 22:00 às 07:00","manager":""},{"id":"sheet-575336","mat":"575336","name":"IRIS VITORIA DE SOUZA GENEROZO","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Dom - Qui - 22:00 às 07:00","manager":""},{"id":"sheet-575337","mat":"575337","name":"EDMILSON JOSE DA SILVA","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Dom - Qui - 22:00 às 07:00","manager":""},{"id":"sheet-575338","mat":"575338","name":"GUSTAVO HENRIQUE MARQUES","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Seg - Sex - 22:00 às 07:00","manager":""},{"id":"sheet-575358","mat":"575358","name":"DAIANE SILVA DOS SANTOS","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Seg - Sex - 22:00 às 07:00","manager":""},{"id":"sheet-575429","mat":"575429","name":"KELLI CRISTINA RUFINO","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Seg - Sex - 22:00 às 07:00","manager":""},{"id":"sheet-575563","mat":"575563","name":"SUELY SILVA GONCALVES BENTO","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Dom - Qui - 22:00 às 07:00","manager":""},{"id":"sheet-575583","mat":"575583","name":"STEFANI RODRIGUES DA SILVA","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Dom - Qui - 22:00 às 07:00","manager":""},{"id":"sheet-575589","mat":"575589","name":"LICIA SILVA DOS SANTOS","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"","manager":""},{"id":"sheet-575596","mat":"575596","name":"DAYANA ALVES DOS SANTOS","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"Qua - Dom - 12:00 às 21:48","manager":""},{"id":"sheet-575137","mat":"575137","name":"ELUIZA EDUARDA DE SOUZA ALVES","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"Seg - Sex - 12:00 às 21:48","manager":""},{"id":"sheet-575223","mat":"575223","name":"LARISSE DIANO MAGALHAES","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"","manager":""},{"id":"sheet-575780","mat":"575780","name":"MANOEL LIMA NETO","job":"AUXILIAR DE OPERACOES","shift":"-","scale":"","manager":""},{"id":"sheet-575805","mat":"575805","name":"DIOGO HENRIQUE GAMA DA SILVA","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Dom - Qui - 22:00 às 07:00","manager":""},{"id":"sheet-575810","mat":"575810","name":"WILLIAM ROBERTO DA SILVA","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Dom - Qui - 22:00 às 07:00","manager":""},{"id":"sheet-575835","mat":"575835","name":"CAROL COSTA BARBOSA","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"Qua - Dom - 12:00 às 21:48","manager":""},{"id":"sheet-575776","mat":"575776","name":"CAMILLY SILVA DE MELO","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"Seg - Sex - 12:00 às 21:48","manager":""},{"id":"sheet-575913","mat":"575913","name":"IZABEL SANTOS DE ANDRADE","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"","manager":""},{"id":"sheet-575943","mat":"575943","name":"TATIANE LARRUSSA","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"Qua - Dom - 12:00 às 21:48","manager":""},{"id":"sheet-516165","mat":"516165","name":"FABIO DE JESUS SOUZA","job":"OPERADOR DE EMPILHADEIRA","shift":"2ºT","scale":"Ter - Sáb - 12:00 às 21:48","manager":"ANDERSON"},{"id":"sheet-575961","mat":"575961","name":"JEFFERSON MAICON DE SOUZA PEREIRA","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Seg - Sex - 22:00 às 07:00","manager":""},{"id":"sheet-575963","mat":"575963","name":"BEATRIZ APARECIDA ALMEIDA SILVA","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Ter - Sáb - 22:00 às 07:00","manager":""},{"id":"sheet-575976","mat":"575976","name":"RODRIGO MOREIRA DOS SANTOS","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Dom - Qui - 22:00 às 07:00","manager":""},{"id":"sheet-575978","mat":"575978","name":"LUIZ HENRIQUE LIMA DA SILVA","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"","manager":""},{"id":"sheet-561852","mat":"561852","name":"INGRID DA SILVA SANTOS","job":"AUXILIAR DE OPERACOES","shift":"-","scale":"","manager":""},{"id":"sheet-524343","mat":"524343","name":"LILIAN ROQUE GARCIA","job":"AUXILIAR DE OPERACOES","shift":"-","scale":"","manager":""},{"id":"sheet-553726","mat":"553726","name":"JESSICA PERREIRA DE OLIVEIRA","job":"ASSISTENTE DE OPERACOES","shift":"2ºT","scale":"Sex - Ter - 12:00 às 21:48","manager":""},{"id":"sheet-561717","mat":"561717","name":"ANDREA DE OLIVEIRA","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"Ter - Sáb - 08:00 às 17:48","manager":""},{"id":"sheet-562082","mat":"562082","name":"JOSENILDA MEIRELES DE SENA","job":"AUXILIAR DE OPERACOES","shift":"2ºT","scale":"Ter - Sáb - 08:00 às 17:48","manager":""},{"id":"sheet-575779","mat":"575779","name":"SAMUEL AMORIM DA VEIGA RIBEIRO","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Seg - Sex - 22:00 às 07:00","manager":""},{"id":"sheet-576945","mat":"576945","name":"GABRIELI ALVES FERREIRA DE JESUS","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Qua - Dom - 22:00 às 07:00","manager":""},{"id":"sheet-575864","mat":"575864","name":"CAMILY VITORIA BENICIO DE SA SILVA","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Seg - Sex - 22:00 às 07:00","manager":""},{"id":"sheet-576943","mat":"576943","name":"ANA KERCIA DA SILVA GOMES","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Seg - Sex - 22:00 às 07:00","manager":""},{"id":"sheet-576947","mat":"576947","name":"BRYANN FRANCA DA SILVA","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Qua - Dom - 22:00 às 07:00","manager":""},{"id":"sheet-576940","mat":"576940","name":"PATRICIA MARIA FARIAS DE LIRA","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Ter - Sáb - 22:00 às 07:00","manager":""},{"id":"sheet-576950","mat":"576950","name":"AGATHA DAMAZIO ROST DE ANDRADE","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Qua - Dom - 22:00 às 07:00","manager":""},{"id":"sheet-576344","mat":"576344","name":"VITORIA CARDOSO DE AZEVEDO","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Dom - Qui - 22:00 às 07:00","manager":""},{"id":"sheet-575960","mat":"575960","name":"ANA KAROLINA MARQUES FELIX","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Seg - Sex - 22:00 às 07:00","manager":""},{"id":"sheet-576936","mat":"576936","name":"BIANCA RAMIRES DA SILVA","job":"AUXILIAR DE OPERACOES","shift":"3ºT","scale":"Dom - Qui - 22:00 às 07:00","manager":""},{"id":"sheet-562601","mat":"562601","name":"DIEGO ALEXANDRE TEIXEIRA","job":"AUXILIAR DE OPERACOES","shift":"1ºT","scale":"","manager":""},{"id":"sheet-577150","mat":"577150","name":"EMILLY ARAUJO DE ALMEIDA","job":"AUXILIAR DE OPERACOES","shift":"","scale":"","manager":""},{"id":"sheet-577161","mat":"577161","name":"RAYANA TALYNE PEREIRA DOS SANTOS","job":"AUXILIAR DE OPERACOES","shift":"","scale":"","manager":""},{"id":"sheet-577614","mat":"577614","name":"DANIELE XAVIER TONINI","job":"","shift":"","scale":"","manager":""}];
 const hasSavedEmployees = localStorage.getItem(APP_STORAGE_PREFIX+"employees") !== null;
 const savedEmployees = load("employees", []);
@@ -759,7 +838,7 @@ function structuredCloneSafe(value){return JSON.parse(JSON.stringify(value))}
 function store(key,value){
  const storageKey=APP_STORAGE_PREFIX+key;
  let baseValue;
- try{const raw=localStorage.getItem(storageKey);baseValue=raw===null?undefined:JSON.parse(raw)}catch(_){baseValue=undefined}
+ try{const raw=localStorage.getItem(storageKey);baseValue=raw===null?undefined:JSON.parse(raw);}catch(_){baseValue=undefined;}
  const snapshot=structuredCloneSafe(value);
  localStorage.setItem(storageKey,JSON.stringify(snapshot));
  pcpQueueSync(key,snapshot,baseValue);
@@ -804,19 +883,8 @@ function canAccessDiaristas(){return canLead()}
 function canManageDiaristas(){return canAdmin()||["SUPERVISOR DE OPERAÇÕES","COORDENADOR DE OPERAÇÕES","GERENTE"].includes(String(currentUser?.role||"").toUpperCase())||roleRank(currentUser?.role)>=5}
 // Realizado: líder e todos os cargos acima podem informar a quantidade que efetivamente chegou.
 function canRecordDiaristaActual(){return canLead()}
-function resetWorkspaceForUser(){
- const now=new Date();currentPeriod={year:now.getFullYear(),month:now.getMonth()};dayFilterState={};
- const year=document.getElementById("periodYear"),month=document.getElementById("periodMonth");
- if(year)year.value=String(currentPeriod.year);if(month)month.value=String(currentPeriod.month);
- ["searchEmployee","filterStatus","filterManager","filterApproval"].forEach(id=>{const el=document.getElementById(id);if(el)el.value="";});
- document.querySelectorAll(".page").forEach(el=>el.classList.remove("active"));
- document.getElementById("page-presence")?.classList.add("active");
- document.querySelectorAll(".navbar button").forEach(b=>b.classList.toggle("active",b.dataset.page==="presence"));
- if(typeof resetUserForm==="function") resetUserForm();
-}
 function activateUser(found){
  currentUser=found;
- resetWorkspaceForUser();
  document.getElementById("loginError").textContent="";
  document.getElementById("loginScreen").classList.add("hidden");
  document.getElementById("app").classList.remove("hidden");
@@ -826,6 +894,7 @@ function activateUser(found){
  document.getElementById("usersNav").classList.toggle("hidden",!canAdmin());
  document.getElementById("diaristasNav").classList.toggle("hidden",!canAccessDiaristas());
  document.getElementById("diaPlanPanel").classList.toggle("hidden",!canManageDiaristas());
+ if(!canAdmin()&&document.querySelector('[data-page="users"]').classList.contains("active"))showPage("presence");
  refreshManagerFilter();renderPresence();renderAbandon();renderVT();renderMeasures();renderDismissals();renderVacations();renderDiaristas();refreshEmployeeLists();updateDashboard();renderUsers();
 }
 function login(){
@@ -833,12 +902,12 @@ function login(){
  const pass=document.getElementById("loginPass").value;
  const found=users.find(u=>u.login.toLowerCase()===loginValue.toLowerCase()&&u.password===pass&&u.enabled);
  if(!found){document.getElementById("loginError").textContent="Usuário ou senha inválidos, ou acesso bloqueado.";return}
- sessionStorage.setItem("pcp_session_user",JSON.stringify({userId:found.id}));
+ localStorage.setItem("pcp_session_user",JSON.stringify({userId:found.id}));
  activateUser(found);
 }
 function logout(){
  currentUser=null;
- sessionStorage.removeItem("pcp_session_user");
+ localStorage.removeItem("pcp_session_user");
  document.getElementById("app").classList.add("hidden");
  document.getElementById("loginScreen").classList.remove("hidden");
  document.getElementById("loginPass").value="";
@@ -846,12 +915,12 @@ function logout(){
 }
 function pcpRestoreSession(){
  try{
-  const saved=JSON.parse(sessionStorage.getItem("pcp_session_user")||"null");
+  const saved=JSON.parse(localStorage.getItem("pcp_session_user")||"null");
   if(!saved?.userId)return;
   const found=users.find(u=>u.id===saved.userId&&u.enabled);
   if(found) activateUser(found);
-  else sessionStorage.removeItem("pcp_session_user");
- }catch(_){sessionStorage.removeItem("pcp_session_user");}
+  else localStorage.removeItem("pcp_session_user");
+ }catch(_){localStorage.removeItem("pcp_session_user");}
 }
 function showPage(name){
  if(name==="users"&&!canAdmin()){notify("Apenas administradores podem acessar esta área.");return}
@@ -922,7 +991,7 @@ function renderPresence(){
    if(STATUSES.includes(f)&&value!==f)return false;
   }
   return true;
- }).sort((a,b)=>String(a.name||"").localeCompare(String(b.name||""),"pt-BR",{sensitivity:"base"}));
+ });
  if(!list.length){body.innerHTML=`<tr><td colspan="${days+7}" class="empty">Nenhum colaborador encontrado com os filtros selecionados.</td></tr>`;renderCompletion();return}
  list.forEach(emp=>{
   const tr=document.createElement("tr");
@@ -1190,9 +1259,8 @@ function renderDiaristas(){
 
 function refreshEmployeeLists(){
  const mats=document.getElementById("employeeOptions"),names=document.getElementById("employeeNames");if(!mats||!names)return;
- const ordered=[...employees].sort((a,b)=>String(a.name||"").localeCompare(String(b.name||""),"pt-BR",{sensitivity:"base"}));
- mats.innerHTML=ordered.map(e=>`<option value="${escapeHTML(e.mat)}">${escapeHTML(e.name)}</option>`).join("");
- names.innerHTML=ordered.map(e=>`<option value="${escapeHTML(e.name)}">${escapeHTML(e.mat)}</option>`).join("");
+ mats.innerHTML=employees.map(e=>`<option value="${escapeHTML(e.mat)}">${escapeHTML(e.name)}</option>`).join("");
+ names.innerHTML=employees.map(e=>`<option value="${escapeHTML(e.name)}">${escapeHTML(e.mat)}</option>`).join("");
 }
 
 function val(id){return document.getElementById(id).value.trim()}
@@ -1213,7 +1281,7 @@ function updateDashboard(){
  document.getElementById("statusChart").innerHTML=Object.entries(counts).filter(([k,n])=>n>0).map(([code,n])=>`<div class="bar-row"><span>${code} – ${STATUS_LABELS[code]}</span><div class="bar-track"><div class="bar-fill" style="width:${n/max*100}%;background:${STATUS_COLORS[code]}"></div></div><b>${n}</b></div>`).join("")||'<div class="empty">Sem apontamentos neste período.</div>';
  const monthly=[];for(let i=11;i>=0;i--){const dt=new Date(y,m-i,1),pd=load("presence_"+periodKey(dt.getFullYear(),dt.getMonth()),{});let p=0,f=0;Object.values(pd).forEach(days=>Object.values(days).forEach(st=>{if(st==="P")p++;else if(["F","AF","AT","ABN","PDA"].includes(st))f++}));const den=p+f;monthly.push({label:MONTHS[dt.getMonth()].slice(0,3)+"/"+String(dt.getFullYear()).slice(-2),ad:den?Math.round(p/den*100):0,abs:den?Math.round(f/den*100):0});}
  document.getElementById("monthlyAnalysis").innerHTML=monthly.map(o=>`<div class="bar-row" style="grid-template-columns:70px 1fr 125px"><span>${o.label}</span><div><div class="bar-track"><div class="bar-fill" style="width:${o.ad}%"></div></div><div class="bar-track" style="margin-top:3px"><div class="bar-fill" style="width:${o.abs}%;background:#c8102e"></div></div></div><b>${o.ad}% / ${o.abs}%</b></div>`).join("");
- const eb=document.getElementById("employeeAnalysisBody");if(eb)eb.innerHTML=[...employees].sort((a,b)=>String(a.name||"").localeCompare(String(b.name||""),"pt-BR",{sensitivity:"base"})).map(emp=>{const vals=Object.values(data[emp.id]||{}),p=vals.filter(v=>v==="P").length,f=vals.filter(v=>["F","AF","AT","ABN","PDA"].includes(v)).length,den=p+f;return `<tr><td>${escapeHTML(emp.name)}</td><td>${p}</td><td>${f}</td><td>${den?Math.round(f/den*100)+"%":"—"}</td><td>${den?Math.round(p/den*100)+"%":"—"}</td></tr>`}).join("");
+ const eb=document.getElementById("employeeAnalysisBody");if(eb)eb.innerHTML=employees.map(emp=>{const vals=Object.values(data[emp.id]||{}),p=vals.filter(v=>v==="P").length,f=vals.filter(v=>["F","AF","AT","ABN","PDA"].includes(v)).length,den=p+f;return `<tr><td>${escapeHTML(emp.name)}</td><td>${p}</td><td>${f}</td><td>${den?Math.round(f/den*100)+"%":"—"}</td><td>${den?Math.round(p/den*100)+"%":"—"}</td></tr>`}).join("");
 }
 function renderUsers(){
  if(!canAdmin())return;
@@ -1247,9 +1315,7 @@ function saveUser(){
  }
  const data={...(previous||{}),id:editingUserId||"usr-"+Date.now(),name:name.toUpperCase(),login:loginValue.toLowerCase(),password,role:selectedRole,enabled:document.getElementById("userEnabled").value==="true"};
  if(editingUserId)users=users.map(u=>u.id===editingUserId?data:u);else users.push(data);
- store("users",users);
- if(currentUser&&currentUser.id===data.id){currentUser=data;document.getElementById("currentUser").textContent=data.name;document.getElementById("currentRole").textContent=data.role==="admin"?"ADMIN":String(data.role||"LÍDER DE OPERAÇÕES").toUpperCase();document.getElementById("usersNav").classList.toggle("hidden",!canAdmin());if(!canAdmin()&&document.querySelector('[data-page="users"]')?.classList.contains("active"))showPage("presence");}
- resetUserForm();renderUsers();notify("Acesso salvo.");
+ store("users",users);resetUserForm();renderUsers();notify("Acesso salvo.");
 }
 function initEvents(){
  document.getElementById("loginButton").addEventListener("click",login);
@@ -1302,12 +1368,22 @@ function init(){
  document.getElementById("dashYear").value=currentPeriod.year;document.getElementById("dashMonth").value=currentPeriod.month;
  document.getElementById("dashDay").value=new Date().getDate();
 }
-init();
-pcpRestoreSession();
-pcpStartRealtime();
-document.addEventListener("visibilitychange",()=>{if(!document.hidden&&pcpSyncQueue.size){clearTimeout(pcpSyncTimer);pcpSyncTimer=setTimeout(pcpFlushSync,80);}});
-window.addEventListener("online",()=>{if(pcpSyncQueue.size){clearTimeout(pcpSyncTimer);pcpSyncTimer=setTimeout(pcpFlushSync,80);}if(!pcpRealtimeActive)pcpStartFallback();});
-if(!pcpRemoteReady) console.warn("PCP está em modo local. Configure a chave e execute o SQL de conexão para ativar a sincronização central.");
+init(); pcpRestoreSession(); pcpStartRealtime();
+if(!pcpRemoteReady) pcpStartBootstrapRetry();
+document.addEventListener("visibilitychange",()=>{
+ if(!document.hidden){
+  if(pcpSyncQueue.size&&pcpRemoteReady){clearTimeout(pcpSyncTimer);pcpSyncTimer=setTimeout(pcpFlushSync,80);}
+  if(pcpRemoteReady)pcpRefreshSnapshot();
+  if(!pcpRealtimeActive&&pcpRemoteReady)pcpScheduleRealtimeRetry(500);
+  if(!pcpRemoteReady)pcpStartBootstrapRetry();
+ }
+});
+window.addEventListener("online",()=>{
+ if(!pcpRemoteReady)pcpStartBootstrapRetry();
+ if(pcpSyncQueue.size&&pcpRemoteReady){clearTimeout(pcpSyncTimer);pcpSyncTimer=setTimeout(pcpFlushSync,80);}
+ if(!pcpRealtimeActive&&pcpRemoteReady)pcpScheduleRealtimeRetry(500);
+});
+if(!pcpRemoteReady)console.warn("PCP aguardando conexão com Supabase; login original mantido e alterações em fila.");
 }
 </script>
 </body>
