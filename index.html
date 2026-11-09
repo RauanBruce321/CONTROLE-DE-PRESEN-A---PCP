@@ -514,7 +514,22 @@ function pcpQueueSync(key,value) {
  if(!pcpRemoteReady) return;
  pcpSyncQueue.set(key,value);
  clearTimeout(pcpSyncTimer);
- pcpSyncTimer=setTimeout(pcpFlushSync,650);
+ pcpSyncTimer=setTimeout(pcpFlushSync,250);
+}
+function pcpApplyRemoteChange(key, value, deleted=false) {
+ const empty = deleted ? null : value;
+ if(key==="users" && !deleted){ users=Array.isArray(value)?value:users; if(currentUser){const fresh=users.find(u=>u.id===currentUser.id&&u.enabled);if(fresh){currentUser=fresh;document.getElementById("currentUser").textContent=fresh.name;document.getElementById("currentRole").textContent=fresh.role==="admin"?"ADMIN":String(fresh.role||"LÍDER DE OPERAÇÕES").toUpperCase();document.getElementById("currentRole").className="badge "+fresh.role;}else logout();} renderUsers(); }
+ else if(key==="employees" && !deleted){ employees=Array.isArray(value)?value:employees; refreshManagerFilter();refreshEmployeeLists();renderPresence();updateDashboard(); }
+ else if(key==="abandon"){abandonRecords=empty||[];renderAbandon();updateDashboard();}
+ else if(key==="vt"){vtRecords=empty||[];renderVT();}
+ else if(key==="measures"){measureRecords=empty||[];renderMeasures();}
+ else if(key==="dismissals"){dismissalRecords=empty||[];renderDismissals();updateDashboard();}
+ else if(key==="vacations"){vacationRecords=empty||[];renderVacations();}
+ else if(key==="diaristas"){diaristaRecords=empty||[];renderDiaristas();}
+ else if(key.startsWith("presence_") || key.startsWith("approvals_")){
+  const activeKey=periodKey(currentPeriod.year,currentPeriod.month);
+  if(key.endsWith(activeKey)){loadPresence();renderPresence();updateDashboard();renderCompletion();}
+ }
 }
 function pcpStartRealtime() {
  if(!pcpClient) return;
@@ -524,17 +539,19 @@ function pcpStartRealtime() {
    if(!row?.key) return;
    const storageKey=APP_STORAGE_PREFIX+row.key;
    if(payload.eventType==="DELETE") {
-    if(localStorage.getItem(storageKey)!==null){localStorage.removeItem(storageKey);location.reload();}
+    if(localStorage.getItem(storageKey)!==null){
+     localStorage.removeItem(storageKey);
+     pcpApplyRemoteChange(row.key,null,true);
+    }
     return;
    }
    const next=JSON.stringify(row.value);
-   if(localStorage.getItem(storageKey)!==next){
-    localStorage.setItem(storageKey,next);
-    // Recarrega para todas as telas e variáveis em memória receberem o valor remoto.
-    location.reload();
-   }
+   // Ignora o eco da própria gravação: o valor já está no armazenamento local.
+   if(localStorage.getItem(storageKey)===next) return;
+   localStorage.setItem(storageKey,next);
+   pcpApplyRemoteChange(row.key,row.value,false);
   })
-  .subscribe(status=>{if(status==="SUBSCRIBED")pcpSetStatus("CONECTADO","Sincronização em tempo real ativa.");});
+  .subscribe(status=>{if(status==="SUBSCRIBED")pcpSetStatus("CONECTADO","Sincronização em tempo real ativa, sem recarregar a página.");});
 }
 
 if (await pcpBootstrap()) {
@@ -609,11 +626,7 @@ function canAccessDiaristas(){return canLead()}
 function canManageDiaristas(){return canAdmin()||["SUPERVISOR DE OPERAÇÕES","COORDENADOR DE OPERAÇÕES","GERENTE"].includes(String(currentUser?.role||"").toUpperCase())||roleRank(currentUser?.role)>=5}
 // Realizado: líder e todos os cargos acima podem informar a quantidade que efetivamente chegou.
 function canRecordDiaristaActual(){return canLead()}
-function login(){
- const loginValue=document.getElementById("loginUser").value.trim();
- const pass=document.getElementById("loginPass").value;
- const found=users.find(u=>u.login.toLowerCase()===loginValue.toLowerCase()&&u.password===pass&&u.enabled);
- if(!found){document.getElementById("loginError").textContent="Usuário ou senha inválidos, ou acesso bloqueado.";return}
+function activateUser(found){
  currentUser=found;
  document.getElementById("loginError").textContent="";
  document.getElementById("loginScreen").classList.add("hidden");
@@ -624,11 +637,34 @@ function login(){
  document.getElementById("usersNav").classList.toggle("hidden",!canAdmin());
  document.getElementById("diaristasNav").classList.toggle("hidden",!canAccessDiaristas());
  document.getElementById("diaPlanPanel").classList.toggle("hidden",!canManageDiaristas());
-
  if(!canAdmin()&&document.querySelector('[data-page="users"]').classList.contains("active"))showPage("presence");
  refreshManagerFilter();renderPresence();renderAbandon();renderVT();renderMeasures();renderDismissals();renderVacations();renderDiaristas();refreshEmployeeLists();updateDashboard();renderUsers();
 }
-function logout(){currentUser=null;document.getElementById("app").classList.add("hidden");document.getElementById("loginScreen").classList.remove("hidden");document.getElementById("loginPass").value="";document.getElementById("loginUser").value=""}
+function login(){
+ const loginValue=document.getElementById("loginUser").value.trim();
+ const pass=document.getElementById("loginPass").value;
+ const found=users.find(u=>u.login.toLowerCase()===loginValue.toLowerCase()&&u.password===pass&&u.enabled);
+ if(!found){document.getElementById("loginError").textContent="Usuário ou senha inválidos, ou acesso bloqueado.";return}
+ localStorage.setItem("pcp_session_user",JSON.stringify({userId:found.id}));
+ activateUser(found);
+}
+function logout(){
+ currentUser=null;
+ localStorage.removeItem("pcp_session_user");
+ document.getElementById("app").classList.add("hidden");
+ document.getElementById("loginScreen").classList.remove("hidden");
+ document.getElementById("loginPass").value="";
+ document.getElementById("loginUser").value="";
+}
+function pcpRestoreSession(){
+ try{
+  const saved=JSON.parse(localStorage.getItem("pcp_session_user")||"null");
+  if(!saved?.userId)return;
+  const found=users.find(u=>u.id===saved.userId&&u.enabled);
+  if(found) activateUser(found);
+  else localStorage.removeItem("pcp_session_user");
+ }catch(_){localStorage.removeItem("pcp_session_user");}
+}
 function showPage(name){
  if(name==="users"&&!canAdmin()){notify("Apenas administradores podem acessar esta área.");return}
  if(name==="diaristas"&&!canAccessDiaristas()){notify("Acesso permitido somente à liderança e cargos superiores.");return}
@@ -1058,6 +1094,7 @@ function init(){
  document.getElementById("dashDay").value=new Date().getDate();
 }
 init();
+pcpRestoreSession();
 pcpStartRealtime();
 if(!pcpRemoteReady) console.warn("PCP está em modo local. Configure a chave e execute o SQL de conexão para ativar a sincronização central.");
 }
