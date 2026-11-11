@@ -164,7 +164,7 @@ thead th.sticky-name{z-index:3;background:var(--red)}
 .employee-analysis{max-height:520px;overflow:auto}
 .employee-analysis table{min-width:650px}
 @media(max-width:560px){.login-brand{padding-bottom:32px}.login-logo{width:125px}.login-slogan{font-size:15px}}
- .company-logo{display:block;object-fit:contain;background:#fff}.login-logo{width:min(100%,398px);height:auto;margin:0 auto}.topbar-logo{width:160px;height:48px;padding:4px 7px;border-radius:2px}.login-brand{padding:22px 24px 18px;text-align:center;border-bottom:4px solid var(--red);background:#fff}.topbar-left{gap:14px}.approval-pending{box-shadow:inset 0 -3px 0 #f0ad00}.approval-approved{box-shadow:inset 0 -3px 0 #16834a}.today-head{outline:2px solid #ffd34e;outline-offset:-2px}.day-filter{display:block;width:54px;max-width:100%;font-size:10px;padding:1px;margin-top:3px}.manager-input{width:145px;min-width:125px;border:1px solid var(--line);padding:5px;font-size:12px}.completion-table td,.completion-table th{white-space:nowrap}.status-cell input{width:100%;min-width:42px;text-align:center;border:0;background:transparent;padding:3px 2px;font-weight:700}.status-cell input:focus{outline:2px solid #2876c7;background:#fff}@media(max-width:700px){.topbar-logo{width:126px;height:42px}.topbar-title{font-size:11px;padding-left:9px}}
+ .company-logo{display:block;object-fit:contain;background:#fff}.login-logo{width:min(100%,398px);height:auto;margin:0 auto}.topbar-logo{width:160px;height:48px;padding:4px 7px;border-radius:2px}.login-brand{padding:22px 24px 18px;text-align:center;border-bottom:4px solid var(--red);background:#fff}.topbar-left{gap:14px}.approval-pending{box-shadow:inset 0 -3px 0 #f0ad00}.approval-approved{box-shadow:inset 0 -3px 0 #16834a}.today-head{background:#ffd34e!important;color:#202020!important;outline:2px solid #e0a800;outline-offset:-2px;font-weight:900}.today-head small{color:#202020!important}.today-head .day-filter{background:#fff8d6;color:#202020;border:1px solid #9b7600;font-weight:700}.day-filter{display:block;width:54px;max-width:100%;font-size:10px;padding:1px;margin-top:3px}.manager-input{width:145px;min-width:125px;border:1px solid var(--line);padding:5px;font-size:12px}.completion-table td,.completion-table th{white-space:nowrap}.status-cell input{width:100%;min-width:42px;text-align:center;border:0;background:transparent;padding:3px 2px;font-weight:700}.status-cell input:focus{outline:2px solid #2876c7;background:#fff}@media(max-width:700px){.topbar-logo{width:126px;height:42px}.topbar-title{font-size:11px;padding-left:9px}}
 /* Ajustes de usabilidade e padronização */
 input:not([type="password"]):not([type="date"]):not([type="file"]):not(#loginUser), textarea, select { text-transform: uppercase; }
 td.resolved-cell { background:#00b050!important; color:#fff!important; font-weight:800; }
@@ -257,7 +257,7 @@ tr.resolved-row td { background:#e2f0d9!important; }
      <button class="btn btn-primary" id="addAbandon">Registrar ocorrência</button>
     </div>
    </div>
-   <div class="panel"><div class="panel-head"><h2>Registros lançados</h2><span id="abCount" class="badge">0 REGISTROS</span></div><div class="table-wrap"><table><thead><tr><th>Matrícula</th><th>Colaborador</th><th>Data</th><th>Último dia</th><th>Responsável</th><th>Status</th><th>Observações</th><th>Ação</th></tr></thead><tbody id="abBody"></tbody></table></div></div>
+   <div class="panel"><div class="panel-head"><h2>Registros lançados</h2><span id="abCount" class="badge">0 REGISTROS</span></div><div class="table-wrap"><table><thead><tr><th>Matrícula</th><th>Colaborador</th><th>Data</th><th>Último dia</th><th>Dias sem comparecer</th><th>Responsável</th><th>Status</th><th>Observações</th><th>Ação</th></tr></thead><tbody id="abBody"></tbody></table></div></div>
   </section>
 
   <section class="page" id="page-vt">
@@ -278,7 +278,7 @@ tr.resolved-row td { background:#e2f0d9!important; }
      <button class="btn btn-primary" id="addVT">Registrar problema</button>
     </div>
    </div>
-   <div class="panel"><div class="panel-head"><h2>Pendências registradas</h2><span id="vtCount" class="badge">0 REGISTROS</span></div><div class="table-wrap"><table><thead><tr><th>Matrícula</th><th>Colaborador</th><th>Data</th><th>Nº chamado</th><th>Problema</th><th>Status</th><th>Responsável</th><th>Detalhes</th><th>Ação</th></tr></thead><tbody id="vtBody"></tbody></table></div></div>
+   <div class="panel"><div class="panel-head"><h2>Pendências registradas</h2><span id="vtCount" class="badge">0 REGISTROS</span></div><div class="table-wrap"><table><thead><tr><th>Matrícula</th><th>Colaborador</th><th>Data do chamado</th><th>Dias em aberto</th><th>Nº chamado</th><th>Problema</th><th>Status</th><th>Responsável</th><th>Detalhes</th><th>Ação</th></tr></thead><tbody id="vtBody"></tbody></table></div></div>
   </section>
 
   <section class="page" id="page-dashboard">
@@ -413,6 +413,12 @@ tr.resolved-row td { background:#e2f0d9!important; }
     </div>
    </div>
    <div class="panel"><div class="panel-head"><h2>Usuários cadastrados</h2><span id="userCount" class="badge">0 USUÁRIOS</span></div><div class="table-wrap"><table><thead><tr><th>Nome</th><th>Login</th><th>Perfil</th><th>Situação</th><th>Ações</th></tr></thead><tbody id="usersBody"></tbody></table></div></div>
+   <div class="panel"><div class="panel-head"><h2>Cadastro de escalas e cargos</h2><span class="badge">SOMENTE ADMIN</span></div><div class="panel-body">
+    <div class="split">
+     <div><h3>Escalas</h3><div class="field"><label>NOVA ESCALA</label><input id="catalogScaleInput" placeholder="Ex.: Seg - Sex - 07:00 às 16:48"></div><button class="btn btn-primary" id="addCatalogScale">Adicionar escala</button><div id="catalogScalesList" style="margin-top:10px"></div></div>
+     <div><h3>Cargos / funções</h3><div class="field"><label>NOVO CARGO</label><input id="catalogJobInput" placeholder="Ex.: OPERADOR DE EMPILHADEIRA"></div><button class="btn btn-primary" id="addCatalogJob">Adicionar cargo</button><div id="catalogJobsList" style="margin-top:10px"></div></div>
+    </div><p class="inline-note" style="margin-top:12px">Use EDITAR para alterar um item existente ou EXCLUIR para removê-lo das opções. Alterações ficam salvas no sistema e sincronizadas com os demais dispositivos.</p>
+   </div></div>
   </section>
  </main>
 </div>
@@ -657,7 +663,7 @@ let users = hasSavedUsers && Array.isArray(savedUsers)
  // A conta do Rauan fica como supervisor, sem permissão administrativa.
  const rauan=users.find(u=>String(u.login||"").toLowerCase()==="rauan.santos")
    ||users.find(u=>/rauan/i.test(String(u.name||"")));
- if(rauan){rauan.name="RAUAN BRUCE";rauan.role="SUPERVISOR DE OPERAÇÕES";}
+ if(rauan){rauan.name="RAUAN BRUCE MINEIRO DOS SANTOS";rauan.role="SUPERVISOR DE OPERAÇÕES";}
  // Garante uma conta ADMIN separada. Se já existir outro administrador,
  // preserva seus dados e credenciais sem alterá-los.
  const separateAdmin=users.find(u=>u!==rauan&&String(u.role||"").toLowerCase()==="admin");
@@ -683,6 +689,10 @@ let measureRecords = load("measures", []);
 let dismissalRecords = load("dismissals", []);
 let vacationRecords = load("vacations", []);
 let diaristaRecords = load("diaristas", []);
+const DEFAULT_SCALES=["Seg - Sex","Ter - Sáb","Qua - Dom","Dom - Qui","Sex - Ter","Seg - Sáb","12x36","Outra / não informada"];
+const DEFAULT_JOBS=["AUXILIAR DE OPERAÇÕES","LÍDER DE OPERAÇÕES","SUPERVISOR DE OPERAÇÕES","COORDENADOR DE OPERAÇÕES","ASSISTENTE ADMINISTRATIVO","AUXILIAR ADMINISTRATIVO","ANALISTA","ESPECIALISTA","GERENTE","OPERADOR DE EMPILHADEIRA","OPERADOR DE TRANSPALETEIRA","ASSISTENTE DE OPERAÇÕES"];
+let catalogScales=load("catalog_scales",uniqueCatalog([...DEFAULT_SCALES,...employees.map(e=>e.scale||"")]));
+let catalogJobs=load("catalog_jobs",uniqueCatalog([...DEFAULT_JOBS,...employees.map(e=>e.job||"")]));
 let currentUser = null;
 let editingUserId = null;
 let presence = {};
@@ -749,7 +759,7 @@ function activateUser(found){
  document.getElementById("diaristasNav").classList.toggle("hidden",!canAccessDiaristas());
  document.getElementById("diaPlanPanel").classList.toggle("hidden",!canManageDiaristas());
  if(!canAdmin()&&document.querySelector('[data-page="users"]').classList.contains("active"))showPage("presence");
- refreshManagerFilter();renderPresence();renderAbandon();renderVT();renderMeasures();renderDismissals();renderVacations();renderDiaristas();refreshEmployeeLists();updateDashboard();renderUsers();
+ refreshManagerFilter();renderPresence();renderAbandon();renderVT();renderMeasures();renderDismissals();renderVacations();renderDiaristas();refreshEmployeeLists();updateDashboard();renderUsers();renderCatalogManager();
 }
 function login(){
  const loginValue=document.getElementById("loginUser").value.trim();
@@ -829,7 +839,8 @@ function renderPresence(){
   const vals=presence[e.id]||{};
   if(search&&!`${e.name} ${e.mat}`.toLowerCase().includes(search))return false;
   if(filter&&!Object.values(vals).includes(filter))return false;
-  if(managerFilter&&(e.manager||"")!==managerFilter)return false;
+  if(managerFilter==="__SEM_GESTOR__"&&(e.manager||"").trim())return false;
+  if(managerFilter&&managerFilter!=="__SEM_GESTOR__"&&(e.manager||"")!==managerFilter)return false;
   if(approvalFilter){
    const states=Object.keys(vals).map(d=>approvals[`${e.id}|${d}`]?.status||"pending");
    if(approvalFilter==="empty"&&Object.keys(vals).length)return false;
@@ -899,7 +910,9 @@ function clearPresenceFilters(){
 function refreshManagerFilter(){
  const sel=document.getElementById("filterManager");if(!sel)return;const old=sel.value;
  const managers=[...new Set(employees.map(e=>(e.manager||"").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"pt-BR"));
- sel.innerHTML='<option value="">Todos os gestores</option>'+managers.map(m=>`<option value="${escapeHTML(m)}">${escapeHTML(m)}</option>`).join("");sel.value=managers.includes(old)?old:"";
+ const hasUnassigned=employees.some(e=>!(e.manager||"").trim());
+ sel.innerHTML='<option value="">Todos os gestores</option>'+managers.map(m=>`<option value="${escapeHTML(m)}">${escapeHTML(m)}</option>`).join("")+(hasUnassigned?'<option value="__SEM_GESTOR__">Sem gestor atribuído</option>':"");
+ sel.value=(managers.includes(old)||(old==="__SEM_GESTOR__"&&hasUnassigned))?old:"";
 }
 function renderCompletion(){
  const body=document.getElementById("completionBody");if(!body)return;
@@ -925,7 +938,22 @@ function approvePresence(){
  savePresence(false);renderPresence();
  notify(count?`${count} apontamento(s) da sua gestão aprovado(s) em ${String(day).padStart(2,"0")}.`:"Não há apontamentos pendentes da sua gestão nesta data.");
 }
+function uniqueCatalog(list){return [...new Set((Array.isArray(list)?list:[]).map(x=>String(x||"").trim()).filter(Boolean))]}
+function refreshCatalogSelects(){
+ catalogScales=uniqueCatalog(catalogScales);catalogJobs=uniqueCatalog(catalogJobs);
+ const role=document.getElementById("empRole"),scale=document.getElementById("empScale"),userRole=document.getElementById("userRole");
+ if(role){const current=role.value;role.innerHTML='<option value="">SELECIONE</option>'+catalogJobs.map(x=>`<option value="${escapeHTML(x)}">${escapeHTML(x)}</option>`).join("");role.value=current}
+ if(scale){const current=scale.value;scale.innerHTML='<option value="">Selecione a escala</option>'+catalogScales.map(x=>`<option value="${escapeHTML(x)}">${escapeHTML(x)}</option>`).join("");scale.value=current}
+ if(userRole){const current=userRole.value;const fixed=["AUXILIAR DE OPERAÇÕES","LÍDER DE OPERAÇÕES","SUPERVISOR DE OPERAÇÕES","COORDENADOR DE OPERAÇÕES","ASSISTENTE ADMINISTRATIVO","AUXILIAR ADMINISTRATIVO","ANALISTA","ESPECIALISTA","GERENTE","admin"];const opts=uniqueCatalog([...fixed.filter(x=>x!=="admin"),...catalogJobs]).filter(x=>x!=="admin");userRole.innerHTML=opts.map(x=>`<option value="${escapeHTML(x)}">${escapeHTML(x)}</option>`).join("")+'<option value="admin">ADMIN</option>';userRole.value=current||"LÍDER DE OPERAÇÕES"}
+}
+function renderCatalogManager(){
+ if(!canAdmin())return;refreshCatalogSelects();
+ const render=(id,items,type)=>{const el=document.getElementById(id);if(!el)return;el.innerHTML=items.map((item,i)=>`<div style="display:flex;gap:6px;align-items:center;justify-content:space-between;border:1px solid #d9dee7;padding:6px;margin:4px 0;background:#fff"><span style="flex:1">${escapeHTML(item)}</span><button class="btn btn-small" data-edit="${i}">EDITAR</button><button class="btn btn-small btn-danger" data-del="${i}">EXCLUIR</button></div>`).join("")||'<div class="empty">Nenhum item cadastrado.</div>';el.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>{const i=Number(b.dataset.edit),next=prompt(type==="scale"?"EDITAR ESCALA:":"EDITAR CARGO:",items[i]);if(next===null)return;const value=next.trim().toUpperCase();if(!value){notify("Informe um nome válido.");return}if(type==="scale"){catalogScales[i]=value;store("catalog_scales",catalogScales)}else{catalogJobs[i]=value;store("catalog_jobs",catalogJobs)}renderCatalogManager()});el.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{const i=Number(b.dataset.del);if(!confirm(`Excluir ${items[i]} das opções?`))return;if(type==="scale"){catalogScales.splice(i,1);store("catalog_scales",catalogScales)}else{catalogJobs.splice(i,1);store("catalog_jobs",catalogJobs)}renderCatalogManager()})};
+ render("catalogScalesList",catalogScales,"scale");render("catalogJobsList",catalogJobs,"job");
+}
+function addCatalogItem(type){if(!canAdmin())return;const id=type==="scale"?"catalogScaleInput":"catalogJobInput",value=document.getElementById(id).value.trim().toUpperCase();if(!value){notify("Digite o nome antes de adicionar.");return}const list=type==="scale"?catalogScales:catalogJobs;if(list.some(x=>x.toUpperCase()===value)){notify("Esse item já existe.");return}list.push(value);if(type==="scale")store("catalog_scales",catalogScales);else store("catalog_jobs",catalogJobs);document.getElementById(id).value="";renderCatalogManager();notify(type==="scale"?"Escala adicionada.":"Cargo adicionado.")}
 function openEmployeeModal(emp=null){
+ refreshCatalogSelects();
  document.getElementById("empMat").value=emp?.mat||"";
  document.getElementById("empName").value=emp?.name||"";
  document.getElementById("empRole").value=emp?.job||"";
@@ -972,10 +1000,11 @@ function addAbandon(){
  if(!data.mat||!data.name||!data.date){notify("Preencha matrícula, nome e data da ocorrência.");return}
  abandonRecords.unshift(data);store("abandon",abandonRecords);["abMat","abName","abDate","abLast","abOwner","abNotes"].forEach(id=>document.getElementById(id).value="");renderAbandon();notify("Registro de abandono incluído.");
 }
+function elapsedDaysFrom(date){if(!date)return "—";const start=new Date(date+"T00:00:00Z");if(Number.isNaN(start.getTime()))return "—";const now=todayISO();const today=new Date(now+"T00:00:00Z");return Math.max(0,Math.floor((today-start)/86400000));}
 function renderAbandon(){
  const body=document.getElementById("abBody");body.innerHTML="";document.getElementById("abCount").textContent=`${abandonRecords.length} REGISTROS`;
- if(!abandonRecords.length){body.innerHTML='<tr><td colspan="8" class="empty">Nenhuma ocorrência registrada.</td></tr>';return}
- abandonRecords.forEach(r=>{const tr=document.createElement("tr");tr.innerHTML=`<td>${escapeHTML(r.mat)}</td><td>${escapeHTML(r.name)}</td><td>${escapeHTML(r.date)}</td><td>${escapeHTML(r.last)}</td><td>${escapeHTML(r.owner)}</td><td>${escapeHTML(r.status)}</td><td style="text-align:left">${escapeHTML(r.notes)}</td><td><button class="btn btn-small btn-danger" data-del="${r.id}">Excluir</button></td>`;tr.querySelector("button").onclick=()=>{if(confirm("Excluir este registro?")){abandonRecords=abandonRecords.filter(x=>x.id!==r.id);store("abandon",abandonRecords);renderAbandon()}};body.appendChild(tr)});
+ if(!abandonRecords.length){body.innerHTML='<tr><td colspan="9" class="empty">Nenhuma ocorrência registrada.</td></tr>';return}
+ abandonRecords.forEach(r=>{const tr=document.createElement("tr");const days=elapsedDaysFrom(r.last||r.date);tr.innerHTML=`<td>${escapeHTML(r.mat)}</td><td>${escapeHTML(r.name)}</td><td>${escapeHTML(r.date)}</td><td>${escapeHTML(r.last)}</td><td><b>${days}</b> dia(s)</td><td>${escapeHTML(r.owner)}</td><td>${escapeHTML(r.status)}</td><td style="text-align:left">${escapeHTML(r.notes)}</td><td><button class="btn btn-small btn-danger" data-del="${r.id}">Excluir</button></td>`;tr.querySelector("button").onclick=()=>{if(confirm("Excluir este registro?")){abandonRecords=abandonRecords.filter(x=>x.id!==r.id);store("abandon",abandonRecords);renderAbandon()}};body.appendChild(tr)});
 }
 function addVT(){
  const data={id:"vt-"+Date.now(),mat:val("vtMat"),name:val("vtName"),date:val("vtDate"),ticket:val("vtTicket"),type:val("vtType"),status:val("vtStatus"),owner:val("vtOwner"),notes:val("vtNotes")};
@@ -984,8 +1013,8 @@ function addVT(){
 }
 function renderVT(){
  const body=document.getElementById("vtBody");body.innerHTML="";document.getElementById("vtCount").textContent=`${vtRecords.length} REGISTROS`;
- if(!vtRecords.length){body.innerHTML='<tr><td colspan="9" class="empty">Nenhuma pendência registrada.</td></tr>';return}
- vtRecords.forEach(r=>{const tr=document.createElement("tr");tr.innerHTML=`<td>${escapeHTML(r.mat)}</td><td>${escapeHTML(r.name)}</td><td>${escapeHTML(r.date)}</td><td>${escapeHTML(r.ticket||"—")}</td><td>${escapeHTML(r.type)}</td><td class="${String(r.status).toUpperCase()==="RESOLVIDO"?"resolved-cell":""}">${escapeHTML(r.status)}</td><td>${escapeHTML(r.owner)}</td><td>${escapeHTML(r.notes)}</td><td><button class="btn btn-small" data-toggle="${r.id}">Alterar status</button> <button class="btn btn-small btn-danger" data-del="${r.id}">Excluir</button></td>`;tr.querySelector("[data-toggle]").onclick=()=>{const opts=["Aberto","Em análise","Resolvido"];r.status=opts[(opts.indexOf(r.status)+1)%opts.length];store("vt",vtRecords);renderVT()};tr.querySelector("[data-del]").onclick=()=>{if(confirm("Excluir esta pendência?")){vtRecords=vtRecords.filter(x=>x.id!==r.id);store("vt",vtRecords);renderVT()}};body.appendChild(tr)});
+ if(!vtRecords.length){body.innerHTML='<tr><td colspan="10" class="empty">Nenhuma pendência registrada.</td></tr>';return}
+ vtRecords.forEach(r=>{const tr=document.createElement("tr");const days=elapsedDaysFrom(r.date);tr.innerHTML=`<td>${escapeHTML(r.mat)}</td><td>${escapeHTML(r.name)}</td><td>${escapeHTML(r.date)}</td><td><b>${days}</b> dia(s)</td><td>${escapeHTML(r.ticket||"—")}</td><td>${escapeHTML(r.type)}</td><td class="${String(r.status).toUpperCase()==="RESOLVIDO"?"resolved-cell":""}">${escapeHTML(r.status)}</td><td>${escapeHTML(r.owner)}</td><td>${escapeHTML(r.notes)}</td><td><button class="btn btn-small" data-toggle="${r.id}">Alterar status</button> <button class="btn btn-small btn-danger" data-del="${r.id}">Excluir</button></td>`;tr.querySelector("[data-toggle]").onclick=()=>{const opts=["Aberto","Em análise","Resolvido"];r.status=opts[(opts.indexOf(r.status)+1)%opts.length];store("vt",vtRecords);renderVT()};tr.querySelector("[data-del]").onclick=()=>{if(confirm("Excluir esta pendência?")){vtRecords=vtRecords.filter(x=>x.id!==r.id);store("vt",vtRecords);renderVT()}};body.appendChild(tr)});
 }
 
 async function addMeasure(){
@@ -1050,11 +1079,10 @@ function addDiaristaPlan(){
 function recordDiaristaActual(id){
  if(!canRecordDiaristaActual())return;
  const r=diaristaRecords.find(x=>x.id===id);if(!r)return;
- if(r.actual!==null&&r.actual!==undefined){notify("ESTA ENTRADA JÁ FOI LANÇADA. SOLICITE AJUSTE AO SUPERVISOR, COORDENADOR OU GERENTE.");return}
- const raw=prompt(`QUANTIDADE REAL QUE ENTROU NO HORÁRIO ${r.time} EM ${r.date}:`);
+ const raw=prompt(`${r.actual!==null&&r.actual!==undefined?"CORRIGIR QUANTIDADE REAL":"QUANTIDADE REAL QUE ENTROU"} NO HORÁRIO ${r.time} EM ${r.date}:`,r.actual??"");
  if(raw===null)return;const actual=Number(raw.trim());
  if(raw.trim()===""||!Number.isInteger(actual)||actual<0){notify("INFORME UMA QUANTIDADE INTEIRA VÁLIDA.");return}
- r.actual=actual;r.updatedBy=currentUser?.name||"LIDERANÇA";r.actualAt=new Date().toISOString();r.history??=[];r.history.push({action:"LANÇAMENTO REAL",by:r.updatedBy,at:r.actualAt,value:actual});
+ const before=r.actual;r.actual=actual;r.updatedBy=currentUser?.name||"LIDERANÇA";r.actualAt=new Date().toISOString();r.history??=[];r.history.push({action:before===null||before===undefined?"LANÇAMENTO REAL":"AJUSTE DO REAL",by:r.updatedBy,at:r.actualAt,before,after:actual,value:actual});
  store("diaristas",diaristaRecords);renderDiaristas();notify("QUANTIDADE REAL REGISTRADA.");
 }
 function editDiaristaPlan(id){
@@ -1102,7 +1130,7 @@ function renderDiaristas(){
   const pctClass=pct===null?"":pct>=100?"resolved-cell":pct>0?"partial-cell":"missed-cell";
   const action=document.createElement("td");
   if(r.actual===null||r.actual===undefined){if(canAccessDiaristas()){const btn=document.createElement("button");btn.className="btn btn-small btn-primary";btn.textContent="LANÇAR REAL";btn.onclick=()=>recordDiaristaActual(r.id);action.append(btn)}}
-  else if(canManageDiaristas()){const adj=document.createElement("button");adj.className="btn btn-small";adj.textContent="AJUSTAR REAL";adj.onclick=()=>{const raw=prompt("CORRIGIR QUANTIDADE REAL:",String(r.actual));if(raw===null)return;const n=Number(raw);if(raw.trim()===""||!Number.isInteger(n)||n<0){notify("QUANTIDADE INVÁLIDA.");return}r.history??=[];r.history.push({action:"AJUSTE DA QUANTIDADE REAL",by:currentUser?.name||"",at:new Date().toISOString(),before:r.actual,after:n});r.actual=n;r.updatedBy=currentUser?.name||"";store("diaristas",diaristaRecords);renderDiaristas()};action.append(adj)}
+  else if(canRecordDiaristaActual()){const adj=document.createElement("button");adj.className="btn btn-small";adj.textContent="AJUSTAR REAL";adj.onclick=()=>recordDiaristaActual(r.id);action.append(adj)}
   if(canManageDiaristas()){const edit=document.createElement("button");edit.className="btn btn-small";edit.style.marginLeft="4px";edit.textContent="EDITAR";edit.onclick=()=>editDiaristaPlan(r.id);const del=document.createElement("button");del.className="btn btn-small btn-danger";del.style.marginLeft="4px";del.textContent="EXCLUIR";del.onclick=()=>deleteDiaristaPlan(r.id);action.append(edit,del)}
   if(r.history?.length){const hist=document.createElement("button");hist.className="btn btn-small";hist.style.marginLeft="4px";hist.textContent="HISTÓRICO";hist.onclick=()=>prompt("HISTÓRICO DE ALTERAÇÕES:",r.history.map(h=>`${h.action} | ${h.by} | ${new Date(h.at).toLocaleString("pt-BR")} | ${h.value??h.after??""}`).join("\n"));action.append(hist)}
   const day=weekday.format(new Date(r.date+"T12:00:00Z")).toUpperCase();
@@ -1167,9 +1195,11 @@ function saveUser(){
  if(previous&&previous.role==="admin"&&selectedRole!=="admin"&&users.filter(u=>u.id!==editingUserId&&u.role==="admin"&&u.enabled).length===0){
   notify("Mantenha pelo menos uma conta ADMIN ativa. Use a conta do Rauan como SUPERVISOR e preserve este acesso administrativo.");return;
  }
- const data={...(previous||{}),id:editingUserId||"usr-"+Date.now(),name:name.toUpperCase(),login:loginValue.toLowerCase(),password,role:selectedRole,enabled:document.getElementById("userEnabled").value==="true"};
+ const isRauanAccount=!!previous&&(previous.id==="admin-rauan"||String(previous.login||"").toLowerCase()==="rauan.santos");
+ const savedName=isRauanAccount?"RAUAN BRUCE MINEIRO DOS SANTOS":name.toUpperCase();
+ const data={...(previous||{}),id:editingUserId||"usr-"+Date.now(),name:savedName,login:loginValue.toLowerCase(),password,role:selectedRole,enabled:document.getElementById("userEnabled").value==="true"};
  if(editingUserId)users=users.map(u=>u.id===editingUserId?data:u);else users.push(data);
- store("users",users);resetUserForm();renderUsers();notify("Acesso salvo.");
+ store("users",users);const saved=users.find(u=>u.id===editingUserId);if(saved&&currentUser?.id===saved.id){currentUser=saved;document.getElementById("currentUser").textContent=saved.name;document.getElementById("currentRole").textContent=saved.role==="admin"?"ADMIN":String(saved.role||"LÍDER DE OPERAÇÕES").toUpperCase();}resetUserForm();renderUsers();notify("Acesso salvo.");
 }
 function initEvents(){
  document.getElementById("loginButton").addEventListener("click",login);
@@ -1207,6 +1237,8 @@ function initEvents(){
  document.getElementById("dashDay").addEventListener("change",updateDashboard);
  document.getElementById("dashMonth").addEventListener("change",updateDashboard);
  document.getElementById("saveUser").addEventListener("click",saveUser);
+ document.getElementById("addCatalogScale").addEventListener("click",()=>addCatalogItem("scale"));
+ document.getElementById("addCatalogJob").addEventListener("click",()=>addCatalogItem("job"));
  document.getElementById("cancelEditUser").addEventListener("click",resetUserForm);
 }
 function changePeriod(){
