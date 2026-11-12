@@ -198,7 +198,8 @@ tr.resolved-row td { background:#e2f0d9!important; }
  <nav class="navbar" aria-label="Menu principal">
   <button class="active" data-page="presence">▦ Controle de presença</button>
   <button data-page="abandon">⚑ Registro abandono</button>
-  <button data-page="vt">▣ Problema VT</button>
+  <button data-page="vt">▣ Chamados VT / VR</button>
+  <button data-page="atestados">▤ Atestados</button>
   <button data-page="dashboard">▥ Dashboard / análise</button>
   <button data-page="measures">▤ Medidas e Feedbacks</button>
   <button data-page="dismissals">▧ Desligados</button>
@@ -261,24 +262,42 @@ tr.resolved-row td { background:#e2f0d9!important; }
   </section>
 
   <section class="page" id="page-vt">
-   <div class="page-head"><div><h1>Problemas de vale-transporte</h1><p>Registro e acompanhamento de pendências de VT.</p></div></div>
+   <div class="page-head"><div><h1>Chamados de VT / VR</h1><p>Registre e acompanhe chamados de vale-transporte e vale-refeição.</p></div></div>
    <div class="panel">
-    <div class="panel-head"><h2>Nova pendência</h2></div>
+    <div class="panel-head"><h2>Novo chamado VT / VR</h2></div>
     <div class="panel-body">
      <div class="form-grid">
       <div class="field"><label>MATRÍCULA</label><input id="vtMat" placeholder="Matrícula"></div>
       <div class="field"><label>NOME DO COLABORADOR</label><input id="vtName" placeholder="Nome completo"></div>
       <div class="field"><label>DATA DO REGISTRO</label><input id="vtDate" type="date"></div>
       <div class="field"><label>NÚMERO DO CHAMADO</label><input id="vtTicket" placeholder="Número do chamado"></div>
-      <div class="field"><label>TIPO DE PROBLEMA</label><select id="vtType"><option>Crédito não disponibilizado</option><option>Valor incorreto</option><option>Cartão bloqueado</option><option>Cartão perdido / danificado</option><option>Outro</option></select></div>
+      <div class="field"><label>BENEFÍCIO</label><select id="vtType"><option value="VT">VALE-TRANSPORTE (VT)</option><option value="VR">VALE-REFEIÇÃO (VR)</option></select></div>
+      <div class="field"><label>TIPO DE PROBLEMA</label><select id="vtProblem"><option>Crédito não disponibilizado</option><option>Valor incorreto</option><option>Cartão bloqueado</option><option>Cartão perdido / danificado</option><option>Valor incorreto</option><option>Outro</option></select></div>
       <div class="field"><label>STATUS</label><select id="vtStatus"><option>Aberto</option><option>Em análise</option><option>Resolvido</option></select></div>
       <div class="field"><label>RESPONSÁVEL</label><input id="vtOwner" placeholder="Líder / responsável"></div>
      </div>
      <div class="field" style="margin-top:10px"><label>DETALHES</label><textarea id="vtNotes" rows="2" placeholder="Descreva a pendência..."></textarea></div>
-     <button class="btn btn-primary" id="addVT">Registrar problema</button>
+     <button class="btn btn-primary" id="addVT">Registrar chamado</button>
     </div>
    </div>
-   <div class="panel"><div class="panel-head"><h2>Pendências registradas</h2><span id="vtCount" class="badge">0 REGISTROS</span></div><div class="table-wrap"><table><thead><tr><th>Matrícula</th><th>Colaborador</th><th>Data do chamado</th><th>Dias em aberto</th><th>Nº chamado</th><th>Problema</th><th>Status</th><th>Responsável</th><th>Detalhes</th><th>Ação</th></tr></thead><tbody id="vtBody"></tbody></table></div></div>
+   <div class="panel"><div class="panel-head"><h2>Chamados registrados</h2><span id="vtCount" class="badge">0 REGISTROS</span></div><div class="table-wrap"><table><thead><tr><th>Matrícula</th><th>Colaborador</th><th>Data do chamado</th><th>Dias em aberto</th><th>Nº chamado</th><th>Benefício</th><th>Problema</th><th>Status</th><th>Responsável</th><th>Detalhes</th><th>Ação</th></tr></thead><tbody id="vtBody"></tbody></table></div></div>
+  </section>
+
+  <section class="page" id="page-atestados">
+   <div class="page-head"><div><h1>CONTROLE DE ATESTADOS</h1><p>Registro dos códigos de aprovação e período de afastamento de cada colaborador.</p></div></div>
+   <div class="panel"><div class="panel-head"><h2>NOVO ATESTADO</h2></div><div class="panel-body">
+    <div class="form-grid">
+     <div class="field"><label>MATRÍCULA</label><input id="atMat" list="employeeOptions" placeholder="MATRÍCULA"></div>
+     <div class="field"><label>NOME DO COLABORADOR</label><input id="atName" list="employeeNames" placeholder="NOME COMPLETO"></div>
+     <div class="field"><label>CÓDIGO DA APROVAÇÃO</label><input id="atCode" placeholder="CÓDIGO / PROTOCOLO"></div>
+     <div class="field"><label>INÍCIO DO ATESTADO</label><input id="atStart" type="date"></div>
+     <div class="field"><label>FIM DO ATESTADO</label><input id="atEnd" type="date"></div>
+     <div class="field"><label>RESPONSÁVEL PELO LANÇAMENTO</label><input id="atOwner" placeholder="LÍDER / RESPONSÁVEL"></div>
+    </div>
+    <div class="field" style="margin-top:10px"><label>OBSERVAÇÕES</label><textarea id="atNotes" rows="2" placeholder="DETALHES OPCIONAIS..."></textarea></div>
+    <button class="btn btn-primary" id="addAtestado">REGISTRAR ATESTADO</button>
+   </div></div>
+   <div class="panel"><div class="panel-head"><h2>HISTÓRICO DE ATESTADOS</h2><span id="atCount" class="badge">0 REGISTROS</span></div><div class="table-wrap"><table><thead><tr><th>MATRÍCULA</th><th>COLABORADOR</th><th>CÓDIGO DE APROVAÇÃO</th><th>INÍCIO</th><th>FIM</th><th>DIAS</th><th>RESPONSÁVEL</th><th>OBSERVAÇÕES</th><th>AÇÃO</th></tr></thead><tbody id="atBody"></tbody></table></div></div>
   </section>
 
   <section class="page" id="page-dashboard">
@@ -461,6 +480,12 @@ let pcpRealtimeChannel = null;
 let pcpRealtimeActive = false;
 let pcpFallbackTimer = null;
 let pcpFallbackBusy = false;
+let pcpReconnectTimer = null;
+let pcpRealtimeRetryTimer = null;
+const pcpLastSnapshots = new Map();
+const pcpArrayCollections = new Set(["users","employees","abandon","vt","atestados","measures","dismissals","vacations","diaristas"]);
+let pcpRemoteKeyApplied = ()=>{};
+let pcpRemoteCellApplied = ()=>{};
 
 function pcpSetStatus(label, title) {
  const el = document.getElementById("pcpSyncStatus");
@@ -476,48 +501,186 @@ function pcpLocalEntries() {
  }
  return out;
 }
+function pcpPersistQueue(){
+ try{localStorage.setItem("ics_pcp_pending_sync_v1",JSON.stringify([...pcpSyncQueue.entries()]));}catch(e){console.warn("PCP: não foi possível persistir fila local",e)}
+}
+function pcpRestoreQueue(){
+ try{const rows=JSON.parse(localStorage.getItem("ics_pcp_pending_sync_v1")||"[]");if(Array.isArray(rows))rows.forEach(([k,v])=>{if(typeof k==="string")pcpSyncQueue.set(k,v)});}catch(_){ }
+}
+function pcpClone(value){return JSON.parse(JSON.stringify(value??{}))}
+function pcpCellCloudKey(kind,period,employeeId,day){
+ return `cell_${kind}_${period}_${encodeURIComponent(String(employeeId))}_${String(day).padStart(2,"0")}`;
+}
+function pcpParseCellCloudKey(key){
+ const m=/^cell_(presence|approvals)_(\d{4}-\d{2})_(.+)_(\d{2})$/.exec(String(key||""));
+ if(!m)return null;
+ try{return {kind:m[1],period:m[2],employeeId:decodeURIComponent(m[3]),day:Number(m[4])}}catch(_){return null}
+}
+function pcpRecordCloudKey(collection,id){return `record_${collection}_${encodeURIComponent(String(id))}`}
+function pcpParseRecordCloudKey(key){
+ const m=/^record_(users|employees|abandon|vt|atestados|measures|dismissals|vacations|diaristas)_(.+)$/.exec(String(key||""));
+ if(!m)return null;
+ try{return {collection:m[1],id:decodeURIComponent(m[2])}}catch(_){return null}
+}
+function pcpApplyRecordRow(key,value){
+ const rec=pcpParseRecordCloudKey(key);if(!rec)return false;
+ const storageKey=APP_STORAGE_PREFIX+rec.collection;
+ let aggregate=[];try{aggregate=JSON.parse(localStorage.getItem(storageKey)||"[]")}catch(_){aggregate=[]}
+ if(!Array.isArray(aggregate))aggregate=[];
+ const existingIndex=aggregate.findIndex(x=>String(x?.id)===rec.id);
+ if(value&&value._deleted){if(existingIndex>=0)aggregate.splice(existingIndex,1);}
+ else if(value&&typeof value==="object"){
+  if(existingIndex>=0)aggregate[existingIndex]=value;else aggregate.unshift(value);
+ }
+ localStorage.setItem(storageKey,JSON.stringify(aggregate));
+ pcpLastSnapshots.set(rec.collection,pcpClone(aggregate));
+ pcpRemoteKeyApplied(rec.collection,aggregate,false);
+ return true;
+}
+function pcpQueueArrayRecords(key,value){
+ if(!pcpArrayCollections.has(key)||!Array.isArray(value))return false;
+ if(!pcpLastSnapshots.has(key)){
+  // Primeira gravação desse módulo: mantém compatibilidade com a linha agregada antiga.
+  pcpSyncQueue.set(key,value);pcpLastSnapshots.set(key,pcpClone(value));
+ }else{
+  const previous=pcpLastSnapshots.get(key)||[],next=pcpClone(value);
+  const before=new Map(previous.map(x=>[String(x?.id),x]));
+  const after=new Map(next.map(x=>[String(x?.id),x]));
+  const ids=new Set([...before.keys(),...after.keys()]);
+  ids.forEach(id=>{
+   if(!id||id==="undefined")return;
+   const a=before.get(id),b=after.get(id);
+   if(JSON.stringify(a??null)===JSON.stringify(b??null))return;
+   pcpSyncQueue.set(pcpRecordCloudKey(key,id),b===undefined?{_deleted:true}:b);
+  });
+  pcpLastSnapshots.set(key,next);
+ }
+ if(pcpSyncQueue.size){pcpPersistQueue();if(pcpRemoteReady){pcpSetStatus("SALVANDO...","Enviando somente os registros alterados ao Supabase.");clearTimeout(pcpSyncTimer);pcpSyncTimer=setTimeout(pcpFlushSync,100)}}
+ return true;
+}
+function pcpRowPriority(row){return pcpParseRecordCloudKey(row?.key)?1:pcpParseCellCloudKey(row?.key)?2:0}
+function pcpApplyCellRow(key,value){
+ const cell=pcpParseCellCloudKey(key);if(!cell)return false;
+ const storageKey=APP_STORAGE_PREFIX+cell.kind+"_"+cell.period;
+ let aggregate={};try{aggregate=JSON.parse(localStorage.getItem(storageKey)||"{}")}catch(_){aggregate={}}
+ if(cell.kind==="presence"){
+  aggregate[cell.employeeId]??={};
+  if(value&&value._deleted){delete aggregate[cell.employeeId][cell.day];if(!Object.keys(aggregate[cell.employeeId]).length)delete aggregate[cell.employeeId];}
+  else aggregate[cell.employeeId][cell.day]=value;
+ }else{
+  const approvalKey=`${cell.employeeId}|${cell.day}`;
+  if(value&&value._deleted)delete aggregate[approvalKey];
+  else aggregate[approvalKey]=value;
+ }
+ localStorage.setItem(storageKey,JSON.stringify(aggregate));
+ pcpLastSnapshots.set(cell.kind+"_"+cell.period,pcpClone(aggregate));
+ pcpRemoteCellApplied(cell,aggregate);
+ return true;
+}
+function pcpApplyRemoteRow(row){
+ if(!row?.key)return;
+ if(pcpApplyRecordRow(row.key,row.value))return;
+ if(pcpApplyCellRow(row.key,row.value))return;
+ const storageKey=APP_STORAGE_PREFIX+row.key;
+ const next=JSON.stringify(row.value);
+ if(localStorage.getItem(storageKey)!==next){
+  localStorage.setItem(storageKey,next);
+  if(pcpArrayCollections.has(row.key)&&Array.isArray(row.value))pcpLastSnapshots.set(row.key,pcpClone(row.value));
+  pcpRemoteKeyApplied(row.key,row.value,false);
+ }
+}
+function pcpQueueMonthlyCells(key,value){
+ const match=/^(presence|approvals)_(\d{4}-\d{2})$/.exec(key);
+ if(!match)return false;
+ const [,kind,period]=match;
+ const previous=pcpLastSnapshots.has(key)?pcpLastSnapshots.get(key):{};
+ const next=pcpClone(value);
+ const changes=[];
+ if(kind==="presence"){
+  const employeeIds=new Set([...Object.keys(previous||{}),...Object.keys(next||{})]);
+  employeeIds.forEach(empId=>{
+   const before=previous?.[empId]||{},after=next?.[empId]||{};
+   const days=new Set([...Object.keys(before),...Object.keys(after)]);
+   days.forEach(day=>{
+    if(JSON.stringify(before[day]??null)===JSON.stringify(after[day]??null))return;
+    changes.push({key:pcpCellCloudKey(kind,period,empId,day),value:after[day]===undefined?{_deleted:true}:after[day]});
+   });
+  });
+ }else{
+  const keys=new Set([...Object.keys(previous||{}),...Object.keys(next||{})]);
+  keys.forEach(approvalKey=>{
+   if(JSON.stringify(previous?.[approvalKey]??null)===JSON.stringify(next?.[approvalKey]??null))return;
+   const split=approvalKey.lastIndexOf("|");if(split<1)return;
+   changes.push({key:pcpCellCloudKey(kind,period,approvalKey.slice(0,split),approvalKey.slice(split+1)),value:next[approvalKey]===undefined?{_deleted:true}:next[approvalKey]});
+  });
+ }
+ pcpLastSnapshots.set(key,next);
+ changes.forEach(item=>pcpSyncQueue.set(item.key,item.value));
+ if(changes.length){pcpPersistQueue();if(pcpRemoteReady){pcpSetStatus("SALVANDO...","Enviando somente as células alteradas para o Supabase.");clearTimeout(pcpSyncTimer);pcpSyncTimer=setTimeout(pcpFlushSync,100)}}
+ return true;
+}
+
 async function pcpBootstrap() {
+ pcpRestoreQueue();
  if(!SUPABASE_URL || !SUPABASE_ANON_KEY || SUPABASE_ANON_KEY.includes("COLE_AQUI")) {
   pcpSetStatus("SEM CHAVE","Cole a chave publishable do Supabase no início do arquivo.");
   return true;
  }
  try {
   pcpSetStatus("CONECTANDO","Conectando ao banco central PCP...");
-  pcpClient=createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{persistSession:false,autoRefreshToken:false},realtime:{params:{eventsPerSecond:2}}});
+  pcpClient=createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{persistSession:false,autoRefreshToken:false},realtime:{params:{eventsPerSecond:10}}});
   const {data,error}=await pcpClient.from(PCP_TABLE).select("key,value");
   if(error) throw error;
-  if(data && data.length) {
-   const remoteKeys=new Set(data.map(r=>APP_STORAGE_PREFIX+r.key));
-   for(let i=localStorage.length-1;i>=0;i--){const k=localStorage.key(i);if(k&&k.startsWith(APP_STORAGE_PREFIX)&&!remoteKeys.has(k))localStorage.removeItem(k);}
-   for(const row of data) localStorage.setItem(APP_STORAGE_PREFIX+row.key,JSON.stringify(row.value));
-  } else {
-   // Primeira conexão: aproveita dados já existentes neste navegador.
-   const existing=pcpLocalEntries();
-   if(existing.length){const {error:seedError}=await pcpClient.from(PCP_TABLE).upsert(existing,{onConflict:"key"});if(seedError)throw seedError;}
+  const remoteRows=Array.isArray(data)?data:[];
+  const remoteByKey=new Map(remoteRows.map(r=>[r.key,r.value]));
+  // O remoto vence quando a chave já existe. Chaves locais ainda não existentes
+  // são enviadas à nuvem; nunca apagamos dados locais só porque faltam no SELECT.
+  const localEntries=pcpLocalEntries();
+  const seedRows=[];
+  for(const entry of localEntries){
+   if(remoteByKey.has(entry.key)) continue;
+   seedRows.push({key:entry.key,value:entry.value});
+  }
+  const orderedRows=[...remoteRows].sort((a,b)=>pcpRowPriority(a)-pcpRowPriority(b));
+  for(const row of orderedRows)pcpApplyRemoteRow(row);
+  // Reaplica alterações pendentes, inclusive células individuais, sobre o estado remoto.
+  for(const [key,value] of pcpSyncQueue.entries())pcpApplyRemoteRow({key,value});
+  if(seedRows.length){
+   const {error:seedError}=await pcpClient.from(PCP_TABLE).upsert(seedRows,{onConflict:"key"});
+   if(seedError)throw seedError;
   }
   pcpRemoteReady=true;
-  pcpSetStatus("CONECTADO","Dados carregados do Supabase. Sincronização automática ativa.");
+  if(pcpReconnectTimer){clearInterval(pcpReconnectTimer);pcpReconnectTimer=null;}
+  pcpSetStatus("CONECTADO","Dados carregados do Supabase. Salvamento e sincronização em tempo real ativos.");
+  if(pcpSyncQueue.size) pcpFlushSync();
   return true;
  } catch(err) {
   pcpLastError=err?.message||String(err);
   pcpRemoteReady=false;
-  pcpSetStatus("ERRO SUPABASE",pcpLastError);
+  pcpSetStatus("SEM SINCRONIA",pcpLastError+". Os lançamentos ficam guardados neste aparelho e serão reenviados quando a conexão voltar.");
   console.error("PCP Supabase:",err);
-  return true; // mantém o sistema local disponível até corrigir a configuração
+  pcpStartReconnect();
+  return true;
  }
 }
 async function pcpFlushSync() {
- if(!pcpRemoteReady || !pcpClient || pcpSyncBusy || !pcpSyncQueue.size) return;
+ if(!pcpClient || !pcpRemoteReady || pcpSyncBusy || !pcpSyncQueue.size) return;
  pcpSyncBusy=true;
  const batch=[...pcpSyncQueue.entries()].map(([key,value])=>({key,value}));
- batch.forEach(x=>pcpSyncQueue.delete(x.key));
+ // A fila permanece persistida até a confirmação do Supabase. Se o navegador
+ // fechar durante a requisição, a alteração continua pendente para a próxima abertura.
  try {
   const {error}=await pcpClient.from(PCP_TABLE).upsert(batch,{onConflict:"key"});
   if(error) throw error;
-  pcpSetStatus("CONECTADO","Últimas alterações salvas no Supabase.");
+  batch.forEach(x=>{
+   if(JSON.stringify(pcpSyncQueue.get(x.key))===JSON.stringify(x.value))pcpSyncQueue.delete(x.key);
+   if(!pcpParseCellCloudKey(x.key)&&!pcpParseRecordCloudKey(x.key))localStorage.setItem(APP_STORAGE_PREFIX+x.key,JSON.stringify(x.value));
+  });
+  pcpPersistQueue();
+  pcpSetStatus("SALVO NA NUVEM","Últimas alterações confirmadas no Supabase.");
  } catch(err) {
-  batch.forEach(x=>pcpSyncQueue.set(x.key,x.value));
-  pcpSetStatus("FALHA AO SALVAR",err?.message||String(err));
+  pcpPersistQueue();
+  pcpSetStatus("FALHA AO SALVAR",(err?.message||String(err))+". A fila foi preservada e será tentada novamente.");
   console.error("PCP sincronização:",err);
  } finally {
   pcpSyncBusy=false;
@@ -525,17 +688,46 @@ async function pcpFlushSync() {
  }
 }
 function pcpQueueSync(key,value) {
- if(!pcpRemoteReady) return;
+ if(pcpQueueArrayRecords(key,value))return;
+ if(pcpQueueMonthlyCells(key,value)){
+  if(!pcpRemoteReady&&pcpSyncQueue.size)pcpSetStatus("AGUARDANDO NUVEM","Células alteradas guardadas neste aparelho; serão enviadas ao recuperar a conexão.");
+  return;
+ }
  pcpSyncQueue.set(key,value);
+ pcpPersistQueue();
+ if(!pcpRemoteReady){pcpSetStatus("AGUARDANDO NUVEM","Alteração guardada neste aparelho; aguardando conexão com Supabase.");return}
+ pcpSetStatus("SALVANDO...","Enviando alteração ao Supabase.");
  clearTimeout(pcpSyncTimer);
- pcpSyncTimer=setTimeout(pcpFlushSync,250);
+ pcpSyncTimer=setTimeout(pcpFlushSync,120);
 }
+function pcpStartReconnect(){
+ if(pcpReconnectTimer)return;
+ pcpReconnectTimer=setInterval(async()=>{
+  if(pcpRemoteReady||!pcpClient||!navigator.onLine)return;
+  try{
+   const {data,error}=await pcpClient.from(PCP_TABLE).select("key,value");
+   if(error)throw error;
+   const remoteRows=Array.isArray(data)?data:[];
+   const remoteKeys=new Set(remoteRows.map(r=>r.key));
+   pcpApplyRemoteSnapshot(remoteRows);
+   const missing=pcpLocalEntries().filter(x=>!remoteKeys.has(x.key)).map(x=>({key:x.key,value:x.value}));
+   missing.forEach(x=>pcpSyncQueue.set(x.key,x.value));
+   pcpRemoteReady=true;
+   clearInterval(pcpReconnectTimer);pcpReconnectTimer=null;
+   pcpPersistQueue();
+   pcpSetStatus("CONECTADO","Conexão recuperada. Sincronizando dados locais e alterações pendentes.");
+   pcpFlushSync();
+  }catch(e){pcpSetStatus("SEM SINCRONIA",e?.message||"Aguardando Supabase...")}
+ },15000);
+}
+
 function pcpApplyRemoteChange(key, value, deleted=false) {
  const empty = deleted ? null : value;
  if(key==="users" && !deleted){ users=Array.isArray(value)?value:users; if(currentUser){const fresh=users.find(u=>u.id===currentUser.id&&u.enabled);if(fresh){currentUser=fresh;document.getElementById("currentUser").textContent=fresh.name;document.getElementById("currentRole").textContent=fresh.role==="admin"?"ADMIN":String(fresh.role||"LÍDER DE OPERAÇÕES").toUpperCase();document.getElementById("currentRole").className="badge "+fresh.role;}else logout();} renderUsers(); }
  else if(key==="employees" && !deleted){ employees=Array.isArray(value)?value:employees; refreshManagerFilter();refreshEmployeeLists();renderPresence();updateDashboard(); }
  else if(key==="abandon"){abandonRecords=empty||[];renderAbandon();updateDashboard();}
  else if(key==="vt"){vtRecords=empty||[];renderVT();}
+ else if(key==="atestados"){atestadoRecords=empty||[];renderAtestados();}
  else if(key==="measures"){measureRecords=empty||[];renderMeasures();}
  else if(key==="dismissals"){dismissalRecords=empty||[];renderDismissals();updateDashboard();}
  else if(key==="vacations"){vacationRecords=empty||[];renderVacations();}
@@ -545,27 +737,20 @@ function pcpApplyRemoteChange(key, value, deleted=false) {
   if(key.endsWith(activeKey)){loadPresence();renderPresence();updateDashboard();renderCompletion();}
  }
 }
+pcpRemoteKeyApplied=pcpApplyRemoteChange;
+pcpRemoteCellApplied=(cell,aggregate)=>{
+ const activeKey=periodKey(currentPeriod.year,currentPeriod.month);
+ if(cell.period!==activeKey)return;
+ if(cell.kind==="presence")presence=aggregate;else approvals=aggregate;
+ renderPresence();updateDashboard();renderCompletion();
+};
 function pcpApplyRemoteSnapshot(rows) {
- const remoteKeys=new Set();
- for(const row of (rows||[])) {
-  if(!row || !row.key) continue;
-  remoteKeys.add(row.key);
-  if(pcpSyncQueue.has(row.key)) continue;
-  const storageKey=APP_STORAGE_PREFIX+row.key;
-  const next=JSON.stringify(row.value);
-  if(localStorage.getItem(storageKey)===next) continue;
-  localStorage.setItem(storageKey,next);
-  pcpApplyRemoteChange(row.key,row.value,false);
+ const orderedRows=[...(rows||[])].sort((a,b)=>pcpRowPriority(a)-pcpRowPriority(b));
+ for(const row of orderedRows){
+  if(!row?.key||pcpSyncQueue.has(row.key))continue;
+  pcpApplyRemoteRow(row);
  }
- // Trata também exclusões feitas em outro aparelho, sem apagar gravações pendentes locais.
- for(let i=localStorage.length-1;i>=0;i--) {
-  const storageKey=localStorage.key(i);
-  if(!storageKey || !storageKey.startsWith(APP_STORAGE_PREFIX)) continue;
-  const key=storageKey.slice(APP_STORAGE_PREFIX.length);
-  if(remoteKeys.has(key) || pcpSyncQueue.has(key)) continue;
-  localStorage.removeItem(storageKey);
-  pcpApplyRemoteChange(key,null,true);
- }
+ // Chaves locais ausentes permanecem intactas até serem confirmadas na nuvem.
 }
 async function pcpFallbackSync() {
  if(!pcpClient || pcpRealtimeActive || pcpFallbackBusy) return;
@@ -574,6 +759,7 @@ async function pcpFallbackSync() {
   const {data,error}=await pcpClient.from(PCP_TABLE).select("key,value");
   if(error) throw error;
   pcpApplyRemoteSnapshot(data||[]);
+  if(pcpSyncQueue.size)pcpFlushSync();
   pcpSetStatus("SINCRONIZADO","Sincronização de contingência ativa. O sistema está conferindo alterações automaticamente enquanto o canal em tempo real reconecta.");
  } catch(err) {
   pcpSetStatus("SEM SINCRONIA",err?.message||"Falha ao consultar alterações remotas.");
@@ -596,16 +782,20 @@ function pcpStartRealtime() {
    if(!row?.key) return;
    const storageKey=APP_STORAGE_PREFIX+row.key;
    if(payload.eventType==="DELETE") {
-    if(localStorage.getItem(storageKey)!==null){
-     localStorage.removeItem(storageKey);
-     pcpApplyRemoteChange(row.key,null,true);
-    }
+    const record=pcpParseRecordCloudKey(row.key);
+    if(record){pcpApplyRecordRow(row.key,{_deleted:true});return;}
+    const cell=pcpParseCellCloudKey(row.key);
+    if(cell){pcpApplyCellRow(row.key,{_deleted:true});return;}
+    if(localStorage.getItem(storageKey)!==null){localStorage.removeItem(storageKey);pcpApplyRemoteChange(row.key,null,true);}
     return;
    }
-   const next=JSON.stringify(row.value);
    if(pcpSyncQueue.has(row.key)) return;
+   if(pcpParseRecordCloudKey(row.key)){pcpApplyRecordRow(row.key,row.value);return;}
+   if(pcpParseCellCloudKey(row.key)){pcpApplyCellRow(row.key,row.value);return;}
+   const next=JSON.stringify(row.value);
    if(localStorage.getItem(storageKey)===next) return;
    localStorage.setItem(storageKey,next);
+   if(pcpArrayCollections.has(row.key)&&Array.isArray(row.value))pcpLastSnapshots.set(row.key,pcpClone(row.value));
    pcpApplyRemoteChange(row.key,row.value,false);
   })
   .subscribe(status=>{
@@ -615,8 +805,13 @@ function pcpStartRealtime() {
     pcpSetStatus("TEMPO REAL","Conectado: alterações de todos os aparelhos aparecem automaticamente, sem atualizar a página.");
    } else if(["CHANNEL_ERROR","TIMED_OUT","CLOSED"].includes(status)) {
     pcpRealtimeActive=false;
-    pcpSetStatus("RECONECTANDO","Canal em tempo real indisponível. Ativando sincronização automática de segurança.");
+    const failedChannel=pcpRealtimeChannel;
+    pcpRealtimeChannel=null;
+    pcpSetStatus("RECONECTANDO","Canal em tempo real indisponível. Ativando sincronização de segurança e reconectando.");
     pcpStartFallback();
+    try{if(failedChannel)pcpClient.removeChannel(failedChannel)}catch(_){ }
+    if(pcpRealtimeRetryTimer)clearTimeout(pcpRealtimeRetryTimer);
+    pcpRealtimeRetryTimer=setTimeout(()=>{pcpRealtimeRetryTimer=null;pcpStartRealtime()},4000);
    }
   });
 }
@@ -685,10 +880,16 @@ let employees = hasSavedEmployees && Array.isArray(savedEmployees)
 store("employees",employees);
 let abandonRecords = load("abandon", []);
 let vtRecords = load("vt", []);
+let atestadoRecords = load("atestados", []);
 let measureRecords = load("measures", []);
 let dismissalRecords = load("dismissals", []);
 let vacationRecords = load("vacations", []);
 let diaristaRecords = load("diaristas", []);
+["users","employees","abandon","vt","atestados","measures","dismissals","vacations","diaristas"].forEach(key=>{
+ if(localStorage.getItem(APP_STORAGE_PREFIX+key)!==null){
+  const value=load(key,[]);if(Array.isArray(value))pcpLastSnapshots.set(key,pcpClone(value));
+ }
+});
 const DEFAULT_SCALES=["Seg - Sex","Ter - Sáb","Qua - Dom","Dom - Qui","Sex - Ter","Seg - Sáb","12x36","Outra / não informada"];
 const DEFAULT_JOBS=["AUXILIAR DE OPERAÇÕES","LÍDER DE OPERAÇÕES","SUPERVISOR DE OPERAÇÕES","COORDENADOR DE OPERAÇÕES","ASSISTENTE ADMINISTRATIVO","AUXILIAR ADMINISTRATIVO","ANALISTA","ESPECIALISTA","GERENTE","OPERADOR DE EMPILHADEIRA","OPERADOR DE TRANSPALETEIRA","ASSISTENTE DE OPERAÇÕES"];
 let catalogScales=load("catalog_scales",uniqueCatalog([...DEFAULT_SCALES,...employees.map(e=>e.scale||"")]));
@@ -708,7 +909,7 @@ function load(key, fallback){
 function structuredCloneSafe(value){return JSON.parse(JSON.stringify(value))}
 function store(key,value){localStorage.setItem(APP_STORAGE_PREFIX+key,JSON.stringify(value));pcpQueueSync(key,value)}
 function periodKey(y,m){return `${y}-${String(m+1).padStart(2,"0")}`}
-function loadPresence(){const key=periodKey(currentPeriod.year,currentPeriod.month);presence=load("presence_"+key,{});approvals=load("approvals_"+key,{})}
+function loadPresence(){const key=periodKey(currentPeriod.year,currentPeriod.month);presence=load("presence_"+key,{});approvals=load("approvals_"+key,{});pcpLastSnapshots.set("presence_"+key,pcpClone(presence));pcpLastSnapshots.set("approvals_"+key,pcpClone(approvals))}
 function savePresence(show=false){const key=periodKey(currentPeriod.year,currentPeriod.month);store("presence_"+key,presence);store("approvals_"+key,approvals);if(show)notify("Apontamentos salvos automaticamente.");updateDashboard();renderCompletion()}
 function notify(message){const el=document.getElementById("toast");el.textContent=message;el.classList.remove("hidden");clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.add("hidden"),2800)}
 function todayISO(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`}
@@ -759,7 +960,7 @@ function activateUser(found){
  document.getElementById("diaristasNav").classList.toggle("hidden",!canAccessDiaristas());
  document.getElementById("diaPlanPanel").classList.toggle("hidden",!canManageDiaristas());
  if(!canAdmin()&&document.querySelector('[data-page="users"]').classList.contains("active"))showPage("presence");
- refreshManagerFilter();renderPresence();renderAbandon();renderVT();renderMeasures();renderDismissals();renderVacations();renderDiaristas();refreshEmployeeLists();updateDashboard();renderUsers();renderCatalogManager();
+ refreshManagerFilter();renderPresence();renderAbandon();renderVT();renderAtestados();renderMeasures();renderDismissals();renderVacations();renderDiaristas();refreshEmployeeLists();updateDashboard();renderUsers();renderCatalogManager();
 }
 function login(){
  const loginValue=document.getElementById("loginUser").value.trim();
@@ -927,16 +1128,21 @@ function approvePresence(){
  const selectedDate=document.getElementById("completionDate").value||todayISO();
  const selectedPeriod=periodKey(Number(selectedDate.slice(0,4)),Number(selectedDate.slice(5,7))-1);
  if(selectedPeriod!==periodKey(currentPeriod.year,currentPeriod.month)){notify("Selecione uma data do mês que está aberto na planilha.");return}
- const day=Number(selectedDate.slice(8,10));let count=0;
+ let count=0;
+ // Aprova todas as células preenchidas e pendentes do mês aberto, respeitando
+ // a equipe que o usuário tem permissão para gerir. Não altera outros módulos.
  employees.forEach(emp=>{
-  // A mesma regra de equipe vale para editar e aprovar: líder na própria equipe;
-  // supervisor/coordenador/gerente e ADMIN podem aprovar em todas.
-  if(!canEditPresence(emp)||!presence[emp.id]?.[day])return;
-  const key=`${emp.id}|${day}`;
-  if(approvals[key]?.status!=="approved"){approvals[key]={status:"approved",by:currentUser.name,at:new Date().toISOString()};count++}
+  if(!canEditPresence(emp))return;
+  for(let day=1;day<=daysInPeriod();day++){
+   if(!presence[emp.id]?.[day])continue;
+   const key=`${emp.id}|${day}`;
+   if(approvals[key]?.status!=="approved"){
+    approvals[key]={status:"approved",by:currentUser.name,at:new Date().toISOString()};count++;
+   }
+  }
  });
- savePresence(false);renderPresence();
- notify(count?`${count} apontamento(s) da sua gestão aprovado(s) em ${String(day).padStart(2,"0")}.`:"Não há apontamentos pendentes da sua gestão nesta data.");
+ savePresence(false);renderPresence();renderCompletion();
+ notify(count?`${count} célula(s) de presença aprovadas no mês inteiro.`:"Não há células pendentes da sua gestão neste mês.");
 }
 function uniqueCatalog(list){return [...new Set((Array.isArray(list)?list:[]).map(x=>String(x||"").trim()).filter(Boolean))]}
 function refreshCatalogSelects(){
@@ -966,7 +1172,28 @@ function openEmployeeModal(emp=null){
 }
 function closeEmployeeModal(){document.getElementById("employeeModal").classList.add("hidden")}
 function editEmployee(id){if(!canEditEmployee()){notify("Somente líder ou cargo superior pode editar colaboradores.");return}const emp=employees.find(e=>e.id===id);if(emp)openEmployeeModal(emp)}
-function deleteEmployee(id){if(!canEditEmployee()){notify("Somente líder ou cargo superior pode excluir colaboradores.");return}const emp=employees.find(e=>e.id===id);if(!emp||!confirm(`Excluir ${emp.name} da lista de colaboradores?`))return;employees=employees.filter(e=>e.id!==id);store("employees",employees);renderPresence();notify("Colaborador excluído.")}
+function deleteEmployee(id){
+ if(!canEditEmployee()){notify("Somente líder ou cargo superior pode excluir colaboradores.");return}
+ const emp=employees.find(e=>e.id===id);if(!emp||!confirm(`Excluir ${emp.name} da lista e remover seus apontamentos de todos os meses?`))return;
+ employees=employees.filter(e=>e.id!==id);store("employees",employees);
+ // Remove presença e aprovações do colaborador de todos os meses já armazenados.
+ const monthKeys=new Set();
+ for(let i=0;i<localStorage.length;i++){
+  const k=localStorage.key(i);if(!k||!k.startsWith(APP_STORAGE_PREFIX))continue;
+  const raw=k.slice(APP_STORAGE_PREFIX.length),m=/^(presence|approvals)_(\d{4}-\d{2})$/.exec(raw);
+  if(m)monthKeys.add(m[2]);
+ }
+ monthKeys.forEach(month=>{
+  const pKey="presence_"+month,aKey="approvals_"+month;
+  const pData=load(pKey,{}),aData=load(aKey,{});
+  if(!pcpLastSnapshots.has(pKey))pcpLastSnapshots.set(pKey,pcpClone(pData));
+  if(!pcpLastSnapshots.has(aKey))pcpLastSnapshots.set(aKey,pcpClone(aData));
+  delete pData[id];
+  Object.keys(aData).forEach(k=>{if(k.startsWith(String(id)+"|"))delete aData[k]});
+  store(pKey,pData);store(aKey,aData);
+ });
+ renderPresence();notify("Colaborador e seus apontamentos removidos. Exclusões sincronizadas com a nuvem.");
+}
 function confirmEmployee(){
  const mat=document.getElementById("empMat").value.trim(),name=document.getElementById("empName").value.trim();
  if(!mat||!name){notify("Informe matrícula e nome.");return}
@@ -1007,14 +1234,41 @@ function renderAbandon(){
  abandonRecords.forEach(r=>{const tr=document.createElement("tr");const days=elapsedDaysFrom(r.last||r.date);tr.innerHTML=`<td>${escapeHTML(r.mat)}</td><td>${escapeHTML(r.name)}</td><td>${escapeHTML(r.date)}</td><td>${escapeHTML(r.last)}</td><td><b>${days}</b> dia(s)</td><td>${escapeHTML(r.owner)}</td><td>${escapeHTML(r.status)}</td><td style="text-align:left">${escapeHTML(r.notes)}</td><td><button class="btn btn-small btn-danger" data-del="${r.id}">Excluir</button></td>`;tr.querySelector("button").onclick=()=>{if(confirm("Excluir este registro?")){abandonRecords=abandonRecords.filter(x=>x.id!==r.id);store("abandon",abandonRecords);renderAbandon()}};body.appendChild(tr)});
 }
 function addVT(){
- const data={id:"vt-"+Date.now(),mat:val("vtMat"),name:val("vtName"),date:val("vtDate"),ticket:val("vtTicket"),type:val("vtType"),status:val("vtStatus"),owner:val("vtOwner"),notes:val("vtNotes")};
+ const data={id:"vt-"+Date.now(),mat:val("vtMat"),name:val("vtName"),date:val("vtDate"),ticket:val("vtTicket"),type:val("vtType"),problem:val("vtProblem"),status:val("vtStatus"),owner:val("vtOwner"),notes:val("vtNotes")};
  if(!data.mat||!data.name||!data.date){notify("Preencha matrícula, nome e data.");return}
- vtRecords.unshift(data);store("vt",vtRecords);["vtMat","vtName","vtDate","vtTicket","vtOwner","vtNotes"].forEach(id=>document.getElementById(id).value="");renderVT();notify("Pendência de VT registrada.");
+ vtRecords.unshift(data);store("vt",vtRecords);["vtMat","vtName","vtDate","vtTicket","vtOwner","vtNotes"].forEach(id=>document.getElementById(id).value="");renderVT();notify("Chamado de VT / VR registrado.");
 }
 function renderVT(){
  const body=document.getElementById("vtBody");body.innerHTML="";document.getElementById("vtCount").textContent=`${vtRecords.length} REGISTROS`;
- if(!vtRecords.length){body.innerHTML='<tr><td colspan="10" class="empty">Nenhuma pendência registrada.</td></tr>';return}
- vtRecords.forEach(r=>{const tr=document.createElement("tr");const days=elapsedDaysFrom(r.date);tr.innerHTML=`<td>${escapeHTML(r.mat)}</td><td>${escapeHTML(r.name)}</td><td>${escapeHTML(r.date)}</td><td><b>${days}</b> dia(s)</td><td>${escapeHTML(r.ticket||"—")}</td><td>${escapeHTML(r.type)}</td><td class="${String(r.status).toUpperCase()==="RESOLVIDO"?"resolved-cell":""}">${escapeHTML(r.status)}</td><td>${escapeHTML(r.owner)}</td><td>${escapeHTML(r.notes)}</td><td><button class="btn btn-small" data-toggle="${r.id}">Alterar status</button> <button class="btn btn-small btn-danger" data-del="${r.id}">Excluir</button></td>`;tr.querySelector("[data-toggle]").onclick=()=>{const opts=["Aberto","Em análise","Resolvido"];r.status=opts[(opts.indexOf(r.status)+1)%opts.length];store("vt",vtRecords);renderVT()};tr.querySelector("[data-del]").onclick=()=>{if(confirm("Excluir esta pendência?")){vtRecords=vtRecords.filter(x=>x.id!==r.id);store("vt",vtRecords);renderVT()}};body.appendChild(tr)});
+ if(!vtRecords.length){body.innerHTML='<tr><td colspan="11" class="empty">Nenhum chamado registrado.</td></tr>';return}
+ vtRecords.forEach(r=>{const tr=document.createElement("tr");const days=elapsedDaysFrom(r.date);tr.innerHTML=`<td>${escapeHTML(r.mat)}</td><td>${escapeHTML(r.name)}</td><td>${escapeHTML(r.date)}</td><td><b>${days}</b> dia(s)</td><td>${escapeHTML(r.ticket||"—")}</td><td>${escapeHTML(r.type||"VT")}</td><td>${escapeHTML(r.problem||"—")}</td><td class="${String(r.status).toUpperCase()==="RESOLVIDO"?"resolved-cell":""}">${escapeHTML(r.status)}</td><td>${escapeHTML(r.owner)}</td><td>${escapeHTML(r.notes)}</td><td><button class="btn btn-small" data-toggle="${r.id}">Alterar status</button> <button class="btn btn-small btn-danger" data-del="${r.id}">Excluir</button></td>`;tr.querySelector("[data-toggle]").onclick=()=>{const opts=["Aberto","Em análise","Resolvido"];r.status=opts[(opts.indexOf(r.status)+1)%opts.length];store("vt",vtRecords);renderVT()};tr.querySelector("[data-del]").onclick=()=>{if(confirm("Excluir esta pendência?")){vtRecords=vtRecords.filter(x=>x.id!==r.id);store("vt",vtRecords);renderVT()}};body.appendChild(tr)});
+}
+
+function atestadoDays(start,end){
+ if(!start||!end)return 0;
+ const a=new Date(start+"T00:00:00Z"),b=new Date(end+"T00:00:00Z");
+ if(Number.isNaN(a.getTime())||Number.isNaN(b.getTime())||b<a)return 0;
+ return Math.floor((b-a)/86400000)+1;
+}
+function addAtestado(){
+ const start=val("atStart"),end=val("atEnd");
+ const data={id:"at-"+Date.now()+"-"+Math.random().toString(36).slice(2,7),mat:val("atMat"),name:val("atName").toUpperCase(),code:val("atCode"),start,end,owner:val("atOwner").toUpperCase()||currentUser?.name||"",notes:val("atNotes").toUpperCase(),createdBy:currentUser?.name||"",createdAt:new Date().toISOString()};
+ if(!data.mat||!data.name||!data.code||!start||!end){notify("Preencha matrícula, nome, código de aprovação e período do atestado.");return}
+ if(end<start){notify("A data final não pode ser anterior à data inicial.");return}
+ atestadoRecords.unshift(data);store("atestados",atestadoRecords);
+ ["atMat","atName","atCode","atStart","atEnd","atOwner","atNotes"].forEach(id=>document.getElementById(id).value="");
+ renderAtestados();notify("Atestado registrado e enviado para sincronização.");
+}
+function renderAtestados(){
+ const body=document.getElementById("atBody");if(!body)return;body.innerHTML="";
+ const count=document.getElementById("atCount");if(count)count.textContent=`${atestadoRecords.length} REGISTROS`;
+ if(!atestadoRecords.length){body.innerHTML='<tr><td colspan="9" class="empty">NENHUM ATESTADO REGISTRADO.</td></tr>';return}
+ atestadoRecords.forEach(r=>{
+  const tr=document.createElement("tr");
+  tr.innerHTML=`<td>${escapeHTML(r.mat)}</td><td>${escapeHTML(r.name)}</td><td>${escapeHTML(r.code)}</td><td>${escapeHTML(r.start)}</td><td>${escapeHTML(r.end)}</td><td><b>${atestadoDays(r.start,r.end)}</b></td><td>${escapeHTML(r.owner)}</td><td>${escapeHTML(r.notes)}</td><td><button class="btn btn-small btn-danger">EXCLUIR</button></td>`;
+  tr.querySelector("button").onclick=()=>{if(confirm("Excluir este atestado permanentemente?")){atestadoRecords=atestadoRecords.filter(x=>x.id!==r.id);store("atestados",atestadoRecords);renderAtestados()}};
+  body.appendChild(tr);
+ });
 }
 
 async function addMeasure(){
@@ -1226,6 +1480,7 @@ function initEvents(){
  document.getElementById("printPresence").addEventListener("click",()=>window.print());
  document.getElementById("addAbandon").addEventListener("click",addAbandon);
  document.getElementById("addVT").addEventListener("click",addVT);
+ document.getElementById("addAtestado").addEventListener("click",addAtestado);
   document.getElementById("addMeasure").addEventListener("click",addMeasure);
  document.getElementById("addDismissal").addEventListener("click",addDismissal);
  document.getElementById("addVacation").addEventListener("click",addVacation);
@@ -1240,6 +1495,8 @@ function initEvents(){
  document.getElementById("addCatalogScale").addEventListener("click",()=>addCatalogItem("scale"));
  document.getElementById("addCatalogJob").addEventListener("click",()=>addCatalogItem("job"));
  document.getElementById("cancelEditUser").addEventListener("click",resetUserForm);
+ document.getElementById("atMat").addEventListener("change",()=>{const e=employees.find(x=>String(x.mat)===val("atMat"));if(e)document.getElementById("atName").value=e.name;});
+ document.getElementById("atName").addEventListener("change",()=>{const e=employees.find(x=>normalizeManagerKey(x.name)===normalizeManagerKey(val("atName")));if(e)document.getElementById("atMat").value=e.mat;});
 }
 function changePeriod(){
  savePresence(false);
@@ -1250,7 +1507,7 @@ function changePeriod(){
 function init(){
  initSelectors();initEvents();loadPresence();
  document.addEventListener("input",e=>{const el=e.target;if(el.id!=="loginUser"&&el.matches('input:not([type="password"]):not([type="date"]):not([type="file"]),textarea')){const a=el.selectionStart,b=el.selectionEnd;el.value=el.value.toUpperCase();try{el.setSelectionRange(a,b)}catch(_){}}});
- document.getElementById("abDate").value=todayISO();document.getElementById("vtDate").value=todayISO();document.getElementById("measureDate").value=todayISO();document.getElementById("completionDate").value=todayISO();document.getElementById("disDate").value=todayISO();document.getElementById("diaDate").value=todayISO();document.getElementById("diaMonth").value=todayISO().slice(0,7);
+ document.getElementById("abDate").value=todayISO();document.getElementById("vtDate").value=todayISO();document.getElementById("atStart").value=todayISO();document.getElementById("atEnd").value=todayISO();document.getElementById("measureDate").value=todayISO();document.getElementById("completionDate").value=todayISO();document.getElementById("disDate").value=todayISO();document.getElementById("diaDate").value=todayISO();document.getElementById("diaMonth").value=todayISO().slice(0,7);
  document.getElementById("dashYear").value=currentPeriod.year;document.getElementById("dashMonth").value=currentPeriod.month;
  document.getElementById("dashDay").value=new Date().getDate();
 }
