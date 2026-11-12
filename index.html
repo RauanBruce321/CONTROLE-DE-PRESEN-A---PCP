@@ -837,29 +837,6 @@ function pcpStartReconnect(){
  },15000);
 }
 
-function pcpApplyRemoteChange(key, value, deleted=false) {
- const empty = deleted ? null : value;
- if(key==="users" && !deleted){ users=Array.isArray(value)?value:users; if(currentUser){const fresh=users.find(u=>u.id===currentUser.id&&u.enabled);if(fresh){currentUser=fresh;document.getElementById("currentUser").textContent=fresh.name;document.getElementById("currentRole").textContent=fresh.role==="admin"?"ADMIN":String(fresh.role||"LÍDER DE OPERAÇÕES").toUpperCase();document.getElementById("currentRole").className="badge "+fresh.role;}else logout();} renderUsers(); }
- else if(key==="employees" && !deleted){ employees=Array.isArray(value)?value:employees; refreshManagerFilter();refreshEmployeeLists();renderPresence();updateDashboard(); }
- else if(key==="abandon"){abandonRecords=empty||[];renderAbandon();updateDashboard();}
- else if(key==="vt"){vtRecords=empty||[];renderVT();}
- else if(key==="atestados"){atestadoRecords=empty||[];renderAtestados();}
- else if(key==="measures"){measureRecords=empty||[];renderMeasures();}
- else if(key==="dismissals"){dismissalRecords=empty||[];renderDismissals();updateDashboard();}
- else if(key==="vacations"){vacationRecords=empty||[];renderVacations();}
- else if(key==="diaristas"){diaristaRecords=empty||[];renderDiaristas();}
- else if(key.startsWith("presence_") || key.startsWith("approvals_")){
-  const activeKey=periodKey(currentPeriod.year,currentPeriod.month);
-  if(key.endsWith(activeKey)){loadPresence();renderPresence();updateDashboard();renderCompletion();}
- }
-}
-pcpRemoteKeyApplied=pcpApplyRemoteChange;
-pcpRemoteCellApplied=(cell,aggregate)=>{
- const activeKey=periodKey(currentPeriod.year,currentPeriod.month);
- if(cell.period!==activeKey)return;
- if(cell.kind==="presence")presence=aggregate;else approvals=aggregate;
- renderPresence();updateDashboard();renderCompletion();
-};
 function pcpApplyRemoteSnapshot(rows) {
  const orderedRows=[...(rows||[])].sort((a,b)=>pcpRowPriority(a)-pcpRowPriority(b));
  for(const row of orderedRows){
@@ -1017,9 +994,30 @@ function load(key, fallback){
 function structuredCloneSafe(value){return JSON.parse(JSON.stringify(value))}
 function store(key,value){localStorage.setItem(APP_STORAGE_PREFIX+key,JSON.stringify(value));pcpQueueSync(key,value)}
 function periodKey(y,m){return `${y}-${String(m+1).padStart(2,"0")}`}
-// Compatibilidade: versões/rotinas antigas podem chamar periodkey com k minúsculo.
-// JavaScript diferencia maiúsculas de minúsculas; manter os dois nomes evita ReferenceError.
-function periodkey(y,m){return periodKey(y,m)}
+// Callbacks do Realtime precisam ficar no mesmo escopo das variáveis do aplicativo.
+function pcpApplyRemoteChange(key, value, deleted=false) {
+ const empty = deleted ? null : value;
+ if(key==="users" && !deleted){ users=Array.isArray(value)?value:users; if(currentUser){const fresh=users.find(u=>u.id===currentUser.id&&u.enabled);if(fresh){currentUser=fresh;document.getElementById("currentUser").textContent=fresh.name;document.getElementById("currentRole").textContent=fresh.role==="admin"?"ADMIN":String(fresh.role||"LÍDER DE OPERAÇÕES").toUpperCase();document.getElementById("currentRole").className="badge "+fresh.role;}else logout();} renderUsers(); }
+ else if(key==="employees" && !deleted){ employees=Array.isArray(value)?value:employees; refreshManagerFilter();refreshEmployeeLists();renderPresence();updateDashboard(); }
+ else if(key==="abandon"){abandonRecords=empty||[];renderAbandon();updateDashboard();}
+ else if(key==="vt"){vtRecords=empty||[];renderVT();}
+ else if(key==="atestados"){atestadoRecords=empty||[];renderAtestados();}
+ else if(key==="measures"){measureRecords=empty||[];renderMeasures();}
+ else if(key==="dismissals"){dismissalRecords=empty||[];renderDismissals();updateDashboard();}
+ else if(key==="vacations"){vacationRecords=empty||[];renderVacations();}
+ else if(key==="diaristas"){diaristaRecords=empty||[];renderDiaristas();}
+ else if(key.startsWith("presence_") || key.startsWith("approvals_")){
+  const activeKey=periodKey(currentPeriod.year,currentPeriod.month);
+  if(key.endsWith(activeKey)){loadPresence();renderPresence();updateDashboard();renderCompletion();}
+ }
+}
+pcpRemoteKeyApplied=pcpApplyRemoteChange;
+pcpRemoteCellApplied=(cell,aggregate)=>{
+ const activeKey=periodKey(currentPeriod.year,currentPeriod.month);
+ if(cell.period!==activeKey)return;
+ if(cell.kind==="presence")presence=aggregate;else approvals=aggregate;
+ renderPresence();updateDashboard();renderCompletion();
+};
 function loadPresence(){const key=periodKey(currentPeriod.year,currentPeriod.month);presence=load("presence_"+key,{});approvals=load("approvals_"+key,{});pcpLastSnapshots.set("presence_"+key,pcpClone(presence));pcpLastSnapshots.set("approvals_"+key,pcpClone(approvals))}
 function savePresence(show=false){const key=periodKey(currentPeriod.year,currentPeriod.month);store("presence_"+key,presence);store("approvals_"+key,approvals);if(show)notify("Apontamentos salvos automaticamente.");updateDashboard();renderCompletion()}
 function notify(message){const el=document.getElementById("toast");el.textContent=message;el.classList.remove("hidden");clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.add("hidden"),2800)}
