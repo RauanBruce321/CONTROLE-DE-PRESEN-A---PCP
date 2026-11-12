@@ -642,17 +642,57 @@ function pcpQueueMonthlyCells(key,value){
  }
  pcpLastSnapshots.set(key,next);
  if(changes.length){
-  // Mantém também o retrato mensal agregado como cópia de segurança.
-  // As linhas individuais continuam sendo aplicadas por último e são a fonte
-  // principal para conciliar alterações simultâneas de aparelhos diferentes.
-  // Isso impede que um refresh carregue um agregado antigo e apague o último
-  // apontamento/aprovação quando a linha individual ainda não foi replicada.
-  pcpSyncQueue.set(key,next);
+  // FONTE ÚNICA: cada célula é uma linha independente no Supabase.
+  // Nunca grava o agregado mensal, pois ele pode chegar depois de uma célula
+  // e sobrescrever uma aprovação mais recente com um retrato antigo.
   changes.forEach(item=>pcpSyncQueue.set(item.key,item.value));
   pcpPersistQueue();
-  if(pcpRemoteReady){pcpSetStatus("SALVANDO...","Enviando o retrato mensal e somente as células alteradas ao Supabase.");clearTimeout(pcpSyncTimer);pcpSyncTimer=setTimeout(pcpFlushSync,100)}
+  if(pcpRemoteReady){pcpSetStatus("SALVANDO...","Enviando somente as células alteradas ao Supabase.");clearTimeout(pcpSyncTimer);pcpSyncTimer=setTimeout(pcpFlushSync,80)}
  }
  return true;
+}
+
+function pcpRebasePendingMonthlyQueues(remoteRows){
+ // Migra filas antigas (V3/V3.2) que ainda continham o mês inteiro para deltas
+ // por célula. O estado remoto é a base; somente diferenças locais pendentes
+ // viram novas gravações, sem republicar um retrato mensal obsoleto.
+ const remote=new Map((remoteRows||[]).map(r=>[r.key,r.value]));
+ const cellRows=(remoteRows||[]).filter(r=>pcpParseCellCloudKey(r?.key));
+ for(const [key,pending] of [...pcpSyncQueue.entries()]){
+  const m=/^(presence|approvals)_(\d{4}-\d{2})$/.exec(key);
+  if(!m||!pending||typeof pending!=="object"){continue}
+  const [,kind,period]=m;
+  const base=pcpClone(remote.get(key)||{});
+  cellRows.filter(r=>{const c=pcpParseCellCloudKey(r.key);return c.kind===kind&&c.period===period}).forEach(r=>{
+   const c=pcpParseCellCloudKey(r.key);
+   if(kind==="presence"){
+    base[c.employeeId]??={};
+    if(r.value&&r.value._deleted){delete base[c.employeeId][c.day];if(!Object.keys(base[c.employeeId]).length)delete base[c.employeeId]}
+    else base[c.employeeId][c.day]=r.value;
+   }else{
+    const a=`${c.employeeId}|${c.day}`;
+    if(r.value&&r.value._deleted)delete base[a];else base[a]=r.value;
+   }
+  });
+  if(kind==="presence"){
+   const ids=new Set([...Object.keys(base),...Object.keys(pending)]);
+   ids.forEach(id=>{
+    const before=base[id]||{},after=pending[id]||{};
+    new Set([...Object.keys(before),...Object.keys(after)]).forEach(day=>{
+     if(JSON.stringify(before[day]??null)===JSON.stringify(after[day]??null))return;
+     pcpSyncQueue.set(pcpCellCloudKey(kind,period,id,day),after[day]===undefined?{_deleted:true}:after[day]);
+    });
+   });
+  }else{
+   new Set([...Object.keys(base),...Object.keys(pending)]).forEach(a=>{
+    if(JSON.stringify(base[a]??null)===JSON.stringify(pending[a]??null))return;
+    const split=a.lastIndexOf("|");if(split<1)return;
+    pcpSyncQueue.set(pcpCellCloudKey(kind,period,a.slice(0,split),a.slice(split+1)),pending[a]===undefined?{_deleted:true}:pending[a]);
+   });
+  }
+  pcpSyncQueue.delete(key);
+ }
+ pcpPersistQueue();
 }
 
 async function pcpBootstrap() {
@@ -667,7 +707,9 @@ async function pcpBootstrap() {
   const {data,error}=await pcpClient.from(PCP_TABLE).select("key,value");
   if(error) throw error;
   const remoteRows=Array.isArray(data)?data:[];
+  pcpRebasePendingMonthlyQueues(remoteRows);
   const remoteByKey=new Map(remoteRows.map(r=>[r.key,r.value]));
+  const remoteCellPeriods=new Set(remoteRows.map(r=>{const c=pcpParseCellCloudKey(r?.key);return c?`${c.kind}_${c.period}`:null}).filter(Boolean));
   // O remoto vence quando a chave já existe. Chaves locais ainda não existentes
   // são enviadas à nuvem; nunca apagamos dados locais só porque faltam no SELECT.
   const localEntries=pcpLocalEntries();
@@ -681,6 +723,7 @@ async function pcpBootstrap() {
   for(const entry of localEntries){
    if(remoteByKey.has(entry.key)) continue;
    if(pcpArrayCollections.has(entry.key) && remoteRecordCollections.has(entry.key)) continue;
+   if(remoteCellPeriods.has(entry.key)) continue;
    seedRows.push({key:entry.key,value:entry.value});
   }
   const orderedRows=[...remoteRows].sort((a,b)=>pcpRowPriority(a)-pcpRowPriority(b));
@@ -716,14 +759,17 @@ async function pcpFlushSync() {
  // fechar durante a requisição, a alteração continua pendente para a próxima abertura.
  try {
   const rowsToSave=batch.map(x=>({key:x.key,value:x.value,updated_at:new Date().toISOString()}));
-  const {error}=await pcpClient.from(PCP_TABLE).upsert(rowsToSave,{onConflict:"key"});
+  const {data:savedRows,error}=await pcpClient.from(PCP_TABLE).upsert(rowsToSave,{onConflict:"key"}).select("key");
   if(error) throw error;
+  const confirmed=new Set((savedRows||[]).map(r=>r.key));
+  const missing=batch.map(x=>x.key).filter(key=>!confirmed.has(key));
+  if(missing.length)throw new Error(`Supabase não confirmou ${missing.length} alteração(ões): ${missing.slice(0,3).join(", ")}`);
   batch.forEach(x=>{
    if(JSON.stringify(pcpSyncQueue.get(x.key))===JSON.stringify(x.value))pcpSyncQueue.delete(x.key);
    if(!pcpParseCellCloudKey(x.key)&&!pcpParseRecordCloudKey(x.key))localStorage.setItem(APP_STORAGE_PREFIX+x.key,JSON.stringify(x.value));
   });
   pcpPersistQueue();
-  pcpSetStatus("SALVO NA NUVEM","Últimas alterações confirmadas no Supabase.");
+  pcpSetStatus("SALVO NA NUVEM","Supabase confirmou a gravação de todas as alterações enviadas.");
  } catch(err) {
   pcpPersistQueue();
   pcpSetStatus("FALHA AO SALVAR",(err?.message||String(err))+". A fila foi preservada e será tentada novamente.");
