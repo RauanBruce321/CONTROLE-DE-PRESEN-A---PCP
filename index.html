@@ -487,10 +487,27 @@ const pcpArrayCollections = new Set(["users","employees","abandon","vt","atestad
 let pcpRemoteKeyApplied = ()=>{};
 let pcpRemoteCellApplied = ()=>{};
 
+function pcpErrorDetail(err){
+ const message=err?.message||String(err||"Erro desconhecido");
+ const stack=err?.stack||"Pilha de execução indisponível";
+ return `${message}\nDetalhes: ${stack}`;
+}
 function pcpSetStatus(label, title) {
  const el = document.getElementById("pcpSyncStatus");
- if (el) { el.textContent = label; el.title = title || label; }
+ if (el) { el.textContent = label; el.title = title || label; el.dataset.diagnostic = label==="SEM SINCRONIA"||label==="FALHA AO SALVAR" ? (title||label) : ""; }
 }
+// Diagnóstico global: captura erros JavaScript que antes podiam ficar sem contexto.
+window.addEventListener("error",event=>{
+ const err=event.error||new Error(event.message||"Erro JavaScript");
+ const detail=pcpErrorDetail(err)+`\nArquivo: ${event.filename||"desconhecido"}\nLinha: ${event.lineno||"?"}:${event.colno||"?"}`;
+ console.error("PCP diagnóstico JavaScript:",detail,err);
+ pcpSetStatus("ERRO NO CÓDIGO",detail);
+});
+window.addEventListener("unhandledrejection",event=>{
+ const detail=pcpErrorDetail(event.reason);
+ console.error("PCP diagnóstico Promise:",detail,event.reason);
+ pcpSetStatus("ERRO NA SINCRONIA",detail);
+});
 function pcpLocalEntries() {
  const out=[];
  for(let i=0;i<localStorage.length;i++){
@@ -745,8 +762,8 @@ async function pcpBootstrap() {
  } catch(err) {
   pcpLastError=err?.message||String(err);
   pcpRemoteReady=false;
-  pcpSetStatus("SEM SINCRONIA",pcpLastError+". Os lançamentos ficam guardados neste aparelho e serão reenviados quando a conexão voltar.");
-  console.error("PCP Supabase:",err);
+  pcpSetStatus("SEM SINCRONIA",pcpErrorDetail(err)+"\nOs lançamentos ficam guardados neste aparelho e serão reenviados quando a conexão voltar.");
+  console.error("PCP Supabase:",pcpErrorDetail(err),err);
   pcpStartReconnect();
   return true;
  }
@@ -772,8 +789,8 @@ async function pcpFlushSync() {
   pcpSetStatus("SALVO NA NUVEM","Supabase confirmou a gravação de todas as alterações enviadas.");
  } catch(err) {
   pcpPersistQueue();
-  pcpSetStatus("FALHA AO SALVAR",(err?.message||String(err))+". A fila foi preservada e será tentada novamente.");
-  console.error("PCP sincronização:",err);
+  pcpSetStatus("FALHA AO SALVAR",pcpErrorDetail(err)+"\nA fila foi preservada e será tentada novamente.");
+  console.error("PCP sincronização:",pcpErrorDetail(err),err);
  } finally {
   pcpSyncBusy=false;
   if(pcpSyncQueue.size) pcpSyncTimer=setTimeout(pcpFlushSync,1200);
@@ -1000,6 +1017,9 @@ function load(key, fallback){
 function structuredCloneSafe(value){return JSON.parse(JSON.stringify(value))}
 function store(key,value){localStorage.setItem(APP_STORAGE_PREFIX+key,JSON.stringify(value));pcpQueueSync(key,value)}
 function periodKey(y,m){return `${y}-${String(m+1).padStart(2,"0")}`}
+// Compatibilidade: versões/rotinas antigas podem chamar periodkey com k minúsculo.
+// JavaScript diferencia maiúsculas de minúsculas; manter os dois nomes evita ReferenceError.
+function periodkey(y,m){return periodKey(y,m)}
 function loadPresence(){const key=periodKey(currentPeriod.year,currentPeriod.month);presence=load("presence_"+key,{});approvals=load("approvals_"+key,{});pcpLastSnapshots.set("presence_"+key,pcpClone(presence));pcpLastSnapshots.set("approvals_"+key,pcpClone(approvals))}
 function savePresence(show=false){const key=periodKey(currentPeriod.year,currentPeriod.month);store("presence_"+key,presence);store("approvals_"+key,approvals);if(show)notify("Apontamentos salvos automaticamente.");updateDashboard();renderCompletion()}
 function notify(message){const el=document.getElementById("toast");el.textContent=message;el.classList.remove("hidden");clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.add("hidden"),2800)}
