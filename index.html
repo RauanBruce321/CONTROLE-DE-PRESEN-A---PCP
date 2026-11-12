@@ -641,8 +641,17 @@ function pcpQueueMonthlyCells(key,value){
   });
  }
  pcpLastSnapshots.set(key,next);
- changes.forEach(item=>pcpSyncQueue.set(item.key,item.value));
- if(changes.length){pcpPersistQueue();if(pcpRemoteReady){pcpSetStatus("SALVANDO...","Enviando somente as células alteradas para o Supabase.");clearTimeout(pcpSyncTimer);pcpSyncTimer=setTimeout(pcpFlushSync,100)}}
+ if(changes.length){
+  // Mantém também o retrato mensal agregado como cópia de segurança.
+  // As linhas individuais continuam sendo aplicadas por último e são a fonte
+  // principal para conciliar alterações simultâneas de aparelhos diferentes.
+  // Isso impede que um refresh carregue um agregado antigo e apague o último
+  // apontamento/aprovação quando a linha individual ainda não foi replicada.
+  pcpSyncQueue.set(key,next);
+  changes.forEach(item=>pcpSyncQueue.set(item.key,item.value));
+  pcpPersistQueue();
+  if(pcpRemoteReady){pcpSetStatus("SALVANDO...","Enviando o retrato mensal e somente as células alteradas ao Supabase.");clearTimeout(pcpSyncTimer);pcpSyncTimer=setTimeout(pcpFlushSync,100)}
+ }
  return true;
 }
 
@@ -1178,7 +1187,7 @@ function approvePresence(){
   }
  });
  savePresence(false);renderPresence();renderCompletion();
- notify(count?`${count} célula(s) aprovadas. Status verde confirmado e enviado para a base.`:"Não há células pendentes da sua gestão neste mês.");
+ notify(count?`${count} célula(s) aprovadas. Status verde salvo; sincronização com a nuvem em andamento.`:"Não há células pendentes da sua gestão neste mês.");
 }
 function uniqueCatalog(list){return [...new Set((Array.isArray(list)?list:[]).map(x=>String(x||"").trim()).filter(Boolean))]}
 function refreshCatalogSelects(){
