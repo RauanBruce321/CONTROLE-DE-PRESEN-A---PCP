@@ -566,13 +566,73 @@ async function pcpBootstrap() {
   return true; // Mantém o app aberto; a fila local protege alterações até a reconexão.
  }
 }
+async function pcpMergeBeforeSync(batch) {
+ // Evita que um aparelho envie um mês inteiro antigo por cima de apontamentos
+ // feitos em outro aparelho. Mescla por colaborador/dia usando a data da aprovação.
+ const keys=new Set(batch.map(x=>String(x.key)));
+ const months=new Set();
+ for(const x of batch){
+  const m=String(x.key).match(/^(?:presence|approvals)_(\d{4}-\d{2})$/);
+  if(m)months.add(m[1]);
+ }
+ months.forEach(m=>{keys.add("presence_"+m);keys.add("approvals_"+m)});
+ if(!keys.size)return batch;
+ const {data,error}=await pcpClient.from(PCP_TABLE).select("key,value").in("key",[...keys]);
+ if(error)throw error;
+ const remote=new Map((data||[]).map(r=>[String(r.key),r.value]));
+ const outgoing=new Map(batch.map(x=>[String(x.key),x]));
+ for(const month of months){
+  const pk="presence_"+month, ak="approvals_"+month;
+  const localP=outgoing.has(pk)?outgoing.get(pk).value:load(pk,{});
+  const localA=outgoing.has(ak)?outgoing.get(ak).value:load(ak,{});
+  const remoteP=remote.get(pk)||{}, remoteA=remote.get(ak)||{};
+  const mergedP={}, mergedA={};
+  const employeeIds=new Set([...Object.keys(localP||{}),...Object.keys(remoteP||{})]);
+  for(const id of employeeIds){
+   const days=new Set([...Object.keys((localP||{})[id]||{}),...Object.keys((remoteP||{})[id]||{})]);
+   for(const day of days){
+    const key=`${id}|${day}`, lv=localP?.[id]?.[day], rv=remoteP?.[id]?.[day];
+    const la=localA?.[key], ra=remoteA?.[key];
+    let useLocal;
+    if(lv==null)useLocal=false; else if(rv==null)useLocal=true;
+    else if(lv===rv)useLocal=new Date(la?.at||0).getTime()>=new Date(ra?.at||0).getTime();
+    else useLocal=new Date(la?.at||0).getTime()>new Date(ra?.at||0).getTime();
+    const value=useLocal?lv:rv, approval=useLocal?la:ra;
+    if(value!=null){mergedP[id]??={};mergedP[id][day]=value;if(approval)mergedA[key]=approval;}
+   }
+  }
+  // Mantém o registro aprovado quando o apontamento não foi alterado; uma edição
+  // posterior tem timestamp mais novo e continua pendente normalmente.
+  for(const [k,a] of Object.entries({...remoteA,...localA})) if(!mergedA[k] && a?.status==="approved") mergedA[k]=a;
+  localStorage.setItem(APP_STORAGE_PREFIX+pk,JSON.stringify(mergedP));
+  localStorage.setItem(APP_STORAGE_PREFIX+ak,JSON.stringify(mergedA));
+  outgoing.set(pk,{key:pk,value:mergedP,updated_at:new Date().toISOString()});
+  outgoing.set(ak,{key:ak,value:mergedA,updated_at:new Date().toISOString()});
+ }
+ // Contas novas são mescladas por ID para que um cadastro recente não seja
+ // perdido quando outro aparelho ainda possui uma lista de usuários mais antiga.
+ if(outgoing.has("users")){
+  const localUsers=Array.isArray(outgoing.get("users").value)?outgoing.get("users").value:[];
+  const remoteUsers=Array.isArray(remote.get("users"))?remote.get("users"):[];
+  const byId=new Map(remoteUsers.map(u=>[String(u.id),u]));
+  for(const u of localUsers){
+   const id=String(u.id), old=byId.get(id);
+   if(!old || new Date(u.updatedAt||0).getTime()>=new Date(old.updatedAt||0).getTime())byId.set(id,u);
+  }
+  const merged=[...byId.values()];
+  localStorage.setItem(APP_STORAGE_PREFIX+"users",JSON.stringify(merged));
+  outgoing.set("users",{...outgoing.get("users"),value:merged});
+ }
+ return [...outgoing.values()];
+}
 async function pcpFlushSync() {
  if(!pcpRemoteReady||!pcpClient||pcpSyncBusy||!pcpSyncQueue.size||!navigator.onLine)return;
  pcpSyncBusy=true;
- const batch=[...pcpSyncQueue.entries()].map(([key,value])=>({key,value,updated_at:new Date().toISOString()}));
+ let batch=[...pcpSyncQueue.entries()].map(([key,value])=>({key,value,updated_at:new Date().toISOString()}));
  batch.forEach(x=>pcpSyncQueue.delete(x.key));
  pcpPersistQueue();
  try {
+  batch=await pcpMergeBeforeSync(batch);
   const {error}=await pcpClient.from(PCP_TABLE).upsert(batch,{onConflict:"key"});
   if(error)throw error;
   pcpLastCloudCheck=Date.now();
@@ -1318,7 +1378,7 @@ function saveUser(){
  }
  const isRauanAccount=!!previous&&(previous.id==="admin-rauan"||String(previous.login||"").toLowerCase()==="rauan.santos");
  const savedName=isRauanAccount?"RAUAN BRUCE MINEIRO DOS SANTOS":name.toUpperCase();
- const data={...(previous||{}),id:editingUserId||"usr-"+Date.now(),name:savedName,login:loginValue.toLowerCase(),password,role:selectedRole,enabled:document.getElementById("userEnabled").value==="true"};
+ const data={...(previous||{}),id:editingUserId||"usr-"+Date.now(),name:savedName,login:loginValue.toLowerCase(),password,role:selectedRole,enabled:document.getElementById("userEnabled").value==="true",updatedAt:new Date().toISOString()};
  if(editingUserId)users=users.map(u=>u.id===editingUserId?data:u);else users.push(data);
  store("users",users);const saved=users.find(u=>u.id===editingUserId);if(saved&&currentUser?.id===saved.id){currentUser=saved;document.getElementById("currentUser").textContent=saved.name;document.getElementById("currentRole").textContent=saved.role==="admin"?"ADMIN":String(saved.role||"LÍDER DE OPERAÇÕES").toUpperCase();}resetUserForm();renderUsers();notify("Acesso salvo.");
 }
